@@ -26,6 +26,7 @@ contract Emulator6502 {
     // Pending interrupt lines
     bool private irqPending;
     bool private nmiPending;
+    bool public romLoaded;
 
     /*//////////////////////////////////////////////////////////////////////////
                                    FLAGS
@@ -47,6 +48,16 @@ contract Emulator6502 {
     uint16 private constant VECTOR_NMI   = 0xFFFA;
     uint16 private constant VECTOR_RESET = 0xFFFC;
     uint16 private constant VECTOR_IRQ   = 0xFFFE;
+
+    // Memory‑mapped IO addresses
+    uint16 private constant IO_KBD = 0xF000; // Keyboard input register (read)
+    uint16 private constant IO_TTY = 0xF001; // Terminal output register (write)
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                   EVENTS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    event CharOut(uint8 ascii);
 
     /*//////////////////////////////////////////////////////////////////////////
                                    CONSTRUCTOR
@@ -310,6 +321,10 @@ contract Emulator6502 {
 
     /// @dev Write an 8‑bit value to RAM
     function _write8(uint16 addr, uint8 value) internal {
+        // Terminal output – emit event
+        if (addr == IO_TTY) {
+            emit CharOut(value);
+        }
         RAM[addr] = bytes1(value);
     }
 
@@ -929,5 +944,35 @@ contract Emulator6502 {
             irqPending = false; // clear pending
             _serviceInterrupt(VECTOR_IRQ, false);
         }
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                 ROM LOADING
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Copy the bytecode of a "cartridge" contract into RAM at `baseAddr`.
+    /// Can only be called once to prevent accidental overwrite.
+    /// @param rom Address of the deployed ROM cartridge contract (its runtime code is the ROM bytes).
+    /// @param baseAddr 16‑bit address where the first byte should be written.
+    function loadRomFrom(address rom, uint16 baseAddr) external {
+        require(!romLoaded, "ROM already loaded");
+
+        uint256 size;
+        assembly {
+            size := extcodesize(rom)
+        }
+        require(size > 0 && size <= 65536, "Invalid ROM size");
+        require(uint256(baseAddr) + size <= 65536, "ROM overflows RAM");
+
+        bytes memory data = new bytes(size);
+        assembly {
+            extcodecopy(rom, add(data, 0x20), 0, size)
+        }
+
+        for (uint256 i = 0; i < size; ++i) {
+            _write8(baseAddr + uint16(i), uint8(data[i]));
+        }
+
+        romLoaded = true;
     }
 } 
