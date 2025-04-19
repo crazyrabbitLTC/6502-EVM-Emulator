@@ -40,13 +40,14 @@ contract Emulator6502 {
 
     constructor() {
         _powerOnReset();
+        _initMemory();
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                    PUBLIC API
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Executes one instruction (stub in Phase 0)
+    /// @notice Executes one instruction (stub in Phase 0)
     function step() external pure {
         revert("NotImplemented");
     }
@@ -64,5 +65,65 @@ contract Emulator6502 {
         cpu.P = uint8(1 << FLAG_INTERRUPT); // I flag set, others cleared
         cpu.PC = 0; // Vector fetch not implemented yet
         cpu.cycles = 0;
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                   MEMORY
+    //////////////////////////////////////////////////////////////////////////*/
+
+    bytes internal RAM; // 64 KiB main memory
+
+    /// @dev Allocate full 64 KiB RAM on deployment
+    function _initMemory() internal {
+        RAM = new bytes(65536);
+    }
+
+    /// @dev Read an 8‑bit value from RAM
+    function _read8(uint16 addr) internal view returns (uint8) {
+        return uint8(RAM[addr]);
+    }
+
+    /// @dev Write an 8‑bit value to RAM
+    function _write8(uint16 addr, uint8 value) internal {
+        RAM[addr] = bytes1(value);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                   FLAG HELPERS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _getFlag(uint8 flag) internal view returns (bool) {
+        return (cpu.P & uint8(1 << flag)) != 0;
+    }
+
+    function _setFlag(uint8 flag, bool value) internal {
+        if (value) {
+            cpu.P |= uint8(1 << flag);
+        } else {
+            cpu.P &= ~uint8(1 << flag);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                            WRAPPERS (TESTING ONLY)
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Expose RAM peek for tests
+    function peek8(uint16 addr) external view returns (uint8) {
+        return _read8(addr);
+    }
+
+    /// @notice Expose RAM poke for tests
+    function poke8(uint16 addr, uint8 value) external {
+        _write8(addr, value);
+    }
+
+    /// @notice Expose flag helpers for tests
+    function testSetFlag(uint8 flag, bool value) external {
+        _setFlag(flag, value);
+    }
+
+    function testGetFlag(uint8 flag) external view returns (bool) {
+        return _getFlag(flag);
     }
 } 
