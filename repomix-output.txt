@@ -120,13 +120,24 @@ script/
 src/
   Counter.sol
   Emulator6502.sol
+  OpcodeTable.sol
 test/
   AddressingModes.t.sol
+  ArithmeticTest.t.sol
+  BranchTest.t.sol
+  CompareTest.t.sol
   Counter.t.sol
   EmulatorInit.t.sol
+  Interrupts.t.sol
+  LogicTest.t.sol
   Memory.t.sol
+  OpcodeMatrix.t.sol
   OpcodeTest.t.sol
   RegisterAccess.t.sol
+  SBCTest.t.sol
+  ShiftRotateTest.t.sol
+  StackJSRTest.t.sol
+  StackPrimitives.t.sol
 .gitignore
 .gitmodules
 foundry.toml
@@ -26488,7 +26499,120 @@ If you want to contribute, or follow along with contributor discussion, you can 
 Forge Standard Library is offered under either [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE) license.
 
 ================
-File: test/AddressingModes.t.sol
+File: .github/workflows/test.yml
+================
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  check:
+    strategy:
+      fail-fast: true
+
+    name: Foundry project
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: |
+          forge --version
+
+      - name: Run Forge fmt
+        run: |
+          forge fmt --check
+        id: fmt
+
+      - name: Run Forge build
+        run: |
+          forge build --sizes
+        id: build
+
+      - name: Run Forge tests
+        run: |
+          forge test -vvv
+        id: test
+
+================
+File: script/Counter.s.sol
+================
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Script, console} from "forge-std/Script.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterScript is Script {
+    Counter public counter;
+
+    function setUp() public {}
+
+    function run() public {
+        vm.startBroadcast();
+
+        counter = new Counter();
+
+        vm.stopBroadcast();
+    }
+}
+
+================
+File: src/Counter.sol
+================
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function setNumber(uint256 newNumber) public {
+        number = newNumber;
+    }
+
+    function increment() public {
+        number++;
+    }
+}
+
+================
+File: src/OpcodeTable.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "./Emulator6502.sol";
+
+library OpcodeTable {
+    struct OpInfo {
+        function(Emulator6502) internal handler;
+        uint8 length;      // bytes in instruction (for future use)
+    }
+
+    // Forward declaration of unimplemented handler so we can reference it in TABLE constant
+    function unimplemented(Emulator6502) internal pure {
+        revert("OpcodeNotImplemented");
+    }
+
+    /// @notice Returns a dummy OpInfo that always reverts – placeholder until table implemented
+    function info(uint8 /*opcode*/) internal pure returns (OpInfo memory) {
+        return OpInfo({handler: unimplemented, length: 0});
+    }
+}
+
+================
+File: test/ArithmeticTest.t.sol
 ================
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -26496,41 +26620,493 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/Emulator6502.sol";
 
-contract AddressingModesTest is Test {
+contract ArithmeticTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P, ) = emu.cpu();
+        return (P & mask) != 0;
+    }
+
+    function test_ADC_NoCarry() public {
+        // A=0x01, ADC #$01 => 0x02
+        emu.testSetPC(0x9000);
+        emu.testSetA(0x01);
+        emu.testSetFlag(0, false); // Clear carry
+        emu.poke8(0x9000, 0x69);
+        emu.poke8(0x9001, 0x01);
+        emu.step();
+        (uint8 A, , , , , uint8 P, ) = emu.cpu();
+        assertEq(A, 0x02);
+        assertFalse(_flag(1 << 0)); // Carry
+        assertFalse(_flag(1 << 1)); // Zero
+        assertFalse(_flag(1 << 7)); // Negative
+        assertFalse(_flag(1 << 6)); // Overflow
+    }
+
+    function test_ADC_CarryAndZero() public {
+        // A=0x01, ADC #0xFF => 0x00 carry set, zero set
+        emu.testSetPC(0x9100);
+        emu.testSetA(0x01);
+        emu.testSetFlag(0, false);
+        emu.poke8(0x9100, 0x69);
+        emu.poke8(0x9101, 0xFF);
+        emu.step();
+        (uint8 A, , , , , , ) = emu.cpu();
+        assertEq(A, 0x00);
+        assertTrue(_flag(1 << 0)); // Carry
+        assertTrue(_flag(1 << 1)); // Zero
+    }
+
+    function test_ADC_Overflow() public {
+        // A=0x01, ADC #0x7F => 0x80 overflow set, negative set
+        emu.testSetPC(0x9200);
+        emu.testSetA(0x01);
+        emu.testSetFlag(0, false);
+        emu.poke8(0x9200, 0x69);
+        emu.poke8(0x9201, 0x7F);
+        emu.step();
+        (uint8 A, , , , , , ) = emu.cpu();
+        assertEq(A, 0x80);
+        assertFalse(_flag(1 << 0)); // Carry
+        assertTrue(_flag(1 << 6)); // Overflow
+        assertTrue(_flag(1 << 7)); // Negative
+    }
+}
+
+================
+File: test/BranchTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract BranchTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public { emu = new Emulator6502(); }
+
+    function _runBranch(uint8 opcode, uint8 offset, bool flagSet, uint8 flagBit) internal returns (uint16 pc) {
+        uint16 start = 0x8000;
+        emu.testSetPC(start);
+        emu.poke8(start, opcode);
+        emu.poke8(start+1, offset);
+        emu.testSetFlag(flagBit, flagSet);
+        emu.step();
+        (, , , , pc,,) = emu.cpu();
+    }
+
+    function test_BCC_taken() public {
+        uint16 pc = _runBranch(0x90, 0x02, false, 0); // carry clear
+        assertEq(pc, 0x8004);
+    }
+
+    function test_BCC_notTaken() public {
+        uint16 pc = _runBranch(0x90, 0x02, true, 0);
+        assertEq(pc, 0x8002);
+    }
+
+    function test_BEQ_taken() public {
+        uint16 pc = _runBranch(0xF0, 0x05, true, 1); // Z set
+        assertEq(pc, 0x8007);
+    }
+
+    function test_BEQ_notTaken() public {
+        uint16 pc = _runBranch(0xF0, 0x05, false, 1);
+        assertEq(pc, 0x8002);
+    }
+
+    function test_BMI_taken() public {
+        uint16 pc = _runBranch(0x30, 0xFE, true, 7); // negative, offset -2
+        assertEq(pc, 0x8000);
+    }
+
+    function test_BNE_taken() public {
+        uint16 pc = _runBranch(0xD0, 0x01, false, 1); // Z clear
+        assertEq(pc, 0x8003);
+    }
+}
+
+================
+File: test/CompareTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract CompareTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P, ) = emu.cpu();
+        return (P & mask) != 0;
+    }
+
+    function test_CMP_equal() public {
+        emu.testSetPC(0xC000);
+        emu.testSetA(0x42);
+        emu.poke8(0xC000, 0xC9); // CMP #imm
+        emu.poke8(0xC001, 0x42);
+        emu.step();
+        assertTrue(_flag(1<<1)); // Z
+        assertTrue(_flag(1<<0)); // C
+        assertFalse(_flag(1<<7)); // N
+    }
+
+    function test_CMP_less() public {
+        emu.testSetPC(0xC100);
+        emu.testSetA(0x01);
+        emu.poke8(0xC100, 0xC9);
+        emu.poke8(0xC101, 0x02);
+        emu.step();
+        assertFalse(_flag(1<<0)); // C
+        assertFalse(_flag(1<<1)); // Z
+        assertTrue(_flag(1<<7)); // N
+    }
+
+    function test_CMP_greater() public {
+        emu.testSetPC(0xC200);
+        emu.testSetA(0x03);
+        emu.poke8(0xC200, 0xC9);
+        emu.poke8(0xC201, 0x02);
+        emu.step();
+        assertTrue(_flag(1<<0)); // C
+        assertFalse(_flag(1<<1)); // Z
+        assertFalse(_flag(1<<7)); // N
+    }
+
+    function test_CPX_equal() public {
+        emu.testSetPC(0xC300);
+        emu.testSetX(0x10);
+        emu.poke8(0xC300, 0xE0); // CPX #imm
+        emu.poke8(0xC301, 0x10);
+        emu.step();
+        assertTrue(_flag(1<<1));
+        assertTrue(_flag(1<<0));
+    }
+
+    function test_CPY_less() public {
+        emu.testSetPC(0xC400);
+        emu.testSetY(0x00);
+        emu.poke8(0xC400, 0xC0); // CPY #imm
+        emu.poke8(0xC401, 0x01);
+        emu.step();
+        assertFalse(_flag(1<<0));
+        assertTrue(_flag(1<<7));
+    }
+}
+
+================
+File: test/Counter.t.sol
+================
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.13;
+
+import {Test, console} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        counter.setNumber(0);
+    }
+
+    function test_Increment() public {
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+
+    function testFuzz_SetNumber(uint256 x) public {
+        counter.setNumber(x);
+        assertEq(counter.number(), x);
+    }
+}
+
+================
+File: test/EmulatorInit.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+/// @title EmulatorInitTest – validates power‑on reset state for Phase 0
+contract EmulatorInitTest is Test {
+    Emulator6502 private emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function test_PowerOnState() public {
+        (uint8 A, uint8 X, uint8 Y, uint8 SP, uint16 PC, uint8 P, uint64 cycles) = emu.cpu();
+
+        assertEq(uint256(A), 0, "A != 0");
+        assertEq(uint256(X), 0, "X != 0");
+        assertEq(uint256(Y), 0, "Y != 0");
+        assertEq(uint256(SP), 0xfd, "SP != 0xfd");
+        assertEq(uint256(PC), 0, "PC != 0");
+        assertEq(uint256(P), 1 << 2, "P != I flag");
+        assertEq(cycles, 0, "cycles != 0");
+    }
+}
+
+================
+File: test/Interrupts.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract InterruptsTest is Test {
+    Emulator6502 emu;
+
+    // Helper to decode CPU struct
+    function _cpu() internal view returns (
+        uint8 A,
+        uint8 X,
+        uint8 Y,
+        uint8 SP,
+        uint16 PC,
+        uint8 P,
+        uint64 cycles
+    ) {
+        return emu.cpu();
+    }
+
+    function setUp() public {
+        emu = new Emulator6502();
+
+        // Set reset vector to 0x8000 for convenience (little‑endian)
+        emu.poke8(0xFFFC, 0x00);
+        emu.poke8(0xFFFD, 0x80);
+        // Manually place PC there for tests (constructor already fetched 0 earlier)
+        emu.testSetPC(0x8000);
+    }
+
+    function testBRKAndRTIFlow() public {
+        // IRQ/BRK vector -> 0x9000
+        emu.poke8(0xFFFE, 0x00);
+        emu.poke8(0xFFFF, 0x90);
+
+        // Instruction bytes
+        emu.poke8(0x8000, 0x00); // BRK
+        emu.poke8(0x9000, 0x40); // RTI at ISR start
+
+        // Step BRK
+        emu.step();
+
+        // After BRK, PC should be 0x9000, SP = 0xFA
+        (, , , uint8 spAfterBRK, uint16 pcAfterBRK, uint8 pAfterBRK,) = _cpu();
+        assertEq(pcAfterBRK, 0x9000, "PC not loaded from IRQ vector");
+        assertEq(spAfterBRK, 0xFA, "SP decrement incorrect after BRK push");
+        // Stack checks
+        assertEq(emu.peek8(0x01FD), 0x80, "High byte incorrect");
+        assertEq(emu.peek8(0x01FC), 0x01, "Low byte incorrect");
+        assertEq(emu.peek8(0x01FB), 0x34, "Status byte incorrect");
+
+        // Step RTI
+        emu.step();
+        (, , , uint8 spAfterRTI, uint16 pcAfterRTI, uint8 pAfterRTI,) = _cpu();
+        assertEq(spAfterRTI, 0xFD, "SP not restored by RTI");
+        assertEq(pcAfterRTI, 0x8001, "PC not restored by RTI");
+        assertEq(pAfterRTI, 0x24, "Processor status restore incorrect");
+    }
+
+    function testIRQServicedWhenEnabled() public {
+        // Clear I flag so IRQs are allowed
+        emu.testSetFlag(2, false);
+        // Set IRQ vector
+        emu.poke8(0xFFFE, 0x00);
+        emu.poke8(0xFFFF, 0x90);
+        // Place RTI
+        emu.poke8(0x9000, 0x40);
+        // trigger
+        emu.triggerIRQ();
+        // Step once -> should service IRQ then execute RTI
+        emu.step();
+        (, , , uint8 spAfter, uint16 pcAfter,,) = _cpu();
+        assertEq(pcAfter, 0x8000, "RTI should return to original PC");
+        assertEq(spAfter, 0xFD, "Stack pointer should be restored");
+    }
+
+    function testNMIOverridesIRQ() public {
+        // Clear I flag to allow IRQ, but NMI should still override even if set
+        emu.testSetFlag(2, false);
+        // Set vectors
+        emu.poke8(0xFFFE, 0x00); emu.poke8(0xFFFF, 0x90); // IRQ -> 0x9000
+        emu.poke8(0xFFFA, 0x00); emu.poke8(0xFFFB, 0x91); // NMI -> 0x9100
+        emu.poke8(0x9000, 0x40); // RTI at 0x9000
+        emu.poke8(0x9100, 0x40); // RTI at 0x9100
+
+        emu.triggerIRQ();
+        emu.triggerNMI();
+        emu.step();
+        (, , , uint8 spAfter, uint16 pcAfter,,) = _cpu();
+        // After servicing NMI and executing RTI, PC should return to original 0x8000
+        assertEq(pcAfter, 0x8000, "NMI RTI should return to original PC");
+        assertEq(spAfter, 0xFD, "Stack pointer restore after NMI");
+    }
+}
+
+================
+File: test/LogicTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract LogicTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P, ) = emu.cpu();
+        return (P & mask) != 0;
+    }
+
+    function test_ORA() public {
+        // A = 0x10; ORA #0x01 -> 0x11 (N=0, Z=0)
+        emu.testSetPC(0xB000);
+        emu.testSetA(0x10);
+        emu.poke8(0xB000, 0x09);
+        emu.poke8(0xB001, 0x01);
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x11);
+        assertFalse(_flag(1<<1));
+        assertFalse(_flag(1<<7));
+    }
+
+    function test_EOR_ZeroNegative() public {
+        // A=0xFF xor 0xFF => 0x00 sets Z, clears N
+        emu.testSetPC(0xB100);
+        emu.testSetA(0xFF);
+        emu.poke8(0xB100, 0x49);
+        emu.poke8(0xB101, 0xFF);
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x00);
+        assertTrue(_flag(1<<1));
+        assertFalse(_flag(1<<7));
+    }
+
+    function test_BIT() public {
+        // A=0b01000000, operand 0b11000000 => Z=0, N=1, V=1
+        emu.testSetPC(0xB200);
+        emu.testSetA(0x40);
+        emu.poke8(0x0044, 0xC0);
+        emu.poke8(0xB200, 0x24); // BIT $44
+        emu.poke8(0xB201, 0x44);
+        emu.step();
+        assertFalse(_flag(1<<1)); // Z
+        assertTrue(_flag(1<<7)); // N
+        assertTrue(_flag(1<<6)); // V
+    }
+}
+
+================
+File: test/Memory.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract MemoryTest is Test {
     Emulator6502 internal emu;
 
     function setUp() public {
         emu = new Emulator6502();
     }
 
-    function test_Immediate() public {
-        // Write literal 0x99 at PC=0x8000
-        emu.testSetPC(0x8000);
-        emu.poke8(0x8000, 0x99);
+    function test_ReadWriteMemory() public {
+        uint16 addr = 0x1234;
+        uint8 value = 0x42;
 
-        uint16 addr = emu.addrImmediate();
-        assertEq(addr, 0x8000);
-        assertEq(emu.peek8(addr), 0x99);
+        emu.poke8(addr, value);
+        uint8 readVal = emu.peek8(addr);
+
+        assertEq(readVal, value, "Memory mismatch");
     }
 
-    function test_ZeroPageXWrap() public {
-        emu.testSetPC(0x9000);
-        emu.testSetX(0x0f);
-        emu.poke8(0x9000, 0xf8); // base addr 0xf8
-        uint16 addr = emu.addrZeroPageX();
-        // expect wrap: 0xf8 + 0x0f = 0x07
-        assertEq(addr, 0x0007);
+    function test_ZeroPageAndStack() public {
+        emu.poke8(0x00ff, 0xaa);
+        assertEq(emu.peek8(0x00ff), 0xaa);
+
+        emu.poke8(0x01fe, 0xbb);
+        assertEq(emu.peek8(0x01fe), 0xbb);
+    }
+}
+
+================
+File: test/OpcodeMatrix.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract OpcodeMatrixTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
     }
 
-    function test_AbsoluteXPageCross() public {
-        emu.testSetPC(0xA000);
-        emu.testSetX(0x10);
-        // write low byte 0xFF, high 0x20 → base 0x20FF, +0x10 -> 0x210F crossing
-        emu.poke8(0xA000, 0xFF);
-        emu.poke8(0xA001, 0x20);
-        (uint16 addr, bool crossed) = emu.addrAbsoluteX();
-        assertEq(addr, 0x210F);
-        assertTrue(crossed);
+    function _execute(uint8 opcode) internal returns (bool implemented) {
+        uint16 pc = 0x8000;
+        emu.testSetPC(pc);
+        emu.poke8(pc, opcode);
+        // Write dummy operand bytes (0x00) to avoid out‑of‑bounds for multi‑byte insns
+        emu.poke8(pc + 1, 0x00);
+        emu.poke8(pc + 2, 0x00);
+        try emu.step() {
+            implemented = true;
+        } catch Error(string memory reason) {
+            // Only treat explicit OpcodeNotImplemented as unimplemented
+            if (keccak256(bytes(reason)) == keccak256("OpcodeNotImplemented")) {
+                implemented = false;
+            } else {
+                // Any other revert propagate as test failure
+                revert(reason);
+            }
+        }
+    }
+
+    function test_AllOpcodesHandledOrRevert() public {
+        uint256 implementedCount;
+        for (uint16 op = 0; op < 256; op++) {
+            bool ok = _execute(uint8(op));
+            if (ok) implementedCount++;
+        }
+        emit log_uint(implementedCount);
+        // Sanity: we expect at least the set we coded ( >60 ).
+        assertGt(implementedCount, 50);
     }
 }
 
@@ -26596,360 +27172,6 @@ contract OpcodeTest is Test {
 }
 
 ================
-File: .github/workflows/test.yml
-================
-name: CI
-
-on:
-  push:
-  pull_request:
-  workflow_dispatch:
-
-env:
-  FOUNDRY_PROFILE: ci
-
-jobs:
-  check:
-    strategy:
-      fail-fast: true
-
-    name: Foundry project
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
-
-      - name: Show Forge version
-        run: |
-          forge --version
-
-      - name: Run Forge fmt
-        run: |
-          forge fmt --check
-        id: fmt
-
-      - name: Run Forge build
-        run: |
-          forge build --sizes
-        id: build
-
-      - name: Run Forge tests
-        run: |
-          forge test -vvv
-        id: test
-
-================
-File: instructions/implementation.md
-================
-Below is a high‑level, yet concrete, implementation roadmap that takes you from a blank contract to an on‑chain 6502 capable of running BASIC programs.  
-At each stage I call out (1) scope, (2) key assumptions, (3) deliverables, (4) recommended tests, and (5) branch / CI hygiene so the work fits cleanly with your house rules.
-
-------------------------------------------------
-PHASE 0 – Foundation & Project‑level Plumbing
-------------------------------------------------
-1. Create a new feature branch `feat/6502-core‑scaffolding`.
-2. Add `forge‑std` test helpers and a basic Foundry project layout (`src/`, `test/`, `script/`).
-3. Enforce linting (`solhint`, `slither‑json`) via `pre‑commit` or CI.  
-4. Add a minimal `Emulator6502.sol` shell that merely stores registers and exposes a `step()` stub.
-5. Write a smoke test `test/EmulatorInit.t.sol` that:
-   • deploys the contract  
-   • asserts all registers & flags power‑on values (per §5 of instructions).
-
-------------------------------------------------
-PHASE 1 – Core Data Structures
-------------------------------------------------
-Scope  
-• Registers: A, X, Y, SP, PC, P (flags).  
-• Memory array: fixed `bytes` of size 64 K.  
-• Helpers to get/set flags.
-
-Assumptions  
-• Store memory in a `bytes` array inside the contract; later we may map it to storage pages for gas efficiency.  
-• Contract can be initialised with a `bytes` ROM image.
-
-Deliverables  
-• `struct CPU` holding the 6 registers + cycle counter.  
-• `mapping(uint16 => uint8) mem;` or `bytes memory mem` plus helpers `read8`, `write8`.
-
-Tests  
-• `test/RegisterAccess.t.sol` – unit tests for flag helpers (set/clear/toggle/serialize).  
-• `test/Memory.t.sol` – reads & writes, zero‑page and stack page boundaries.
-
-------------------------------------------------
-PHASE 2 – Addressing‑mode Helpers
-------------------------------------------------
-Scope  
-Implement 13 NMOS addressing modes (§3).
-
-Deliverables  
-• Pure/constant internal functions that, given `CPU` & `bytes mem`, compute the effective address plus flags about page‑cross penalties.
-
-Tests  
-• Table‑driven test `test/AddressingModes.t.sol` using vectors from real 6502 docs.  
-• Cross‑check page‑cross cycle penalty flag.
-
-------------------------------------------------
-PHASE 3 – Opcode Table & Dispatcher
-------------------------------------------------
-Scope  
-• A `struct OpInfo { function(CPU storage, bytes storage) internal returns (uint cycles) handler; uint8 bytes; uint8 baseCycles; bool pagePenalty; }`.  
-• Populate a 256‑entry constant array at deployment.
-
-Assumptions  
-• Illegal opcodes revert for v1.
-
-Deliverables  
-• `executeNext()` that:  
-  1. fetches opcode at `PC`,  
-  2. looks up `OpInfo`,  
-  3. calls handler,  
-  4. updates cycle counter.
-
-Tests  
-• `test/OpcodeMatrix.t.sol` that loops all 256 entries and ensures non‑implemented opcodes revert with an `IllegalOpcode()` error.
-
-------------------------------------------------
-PHASE 4 – ALU & Flag Logic
-------------------------------------------------
-Scope  
-ADC, SBC, AND, ORA, EOR, CMP, CPX, CPY, BIT + shifts/rotates.  
-Decimal mode optional but recommended (see §6 caveats).
-
-Deliverables  
-• Internal pure functions `adc`, `sbc` etc. returning result + updated flags.  
-• Unit opcode handlers that glue addressing‑mode helpers with ALU helpers.
-
-Tests  
-• Property‑based tests for ADC/SBC overflow & carry.  
-• Exhaustive tables for BIT, CMP etc.  
-• Decimal mode golden vectors from real hardware trace.
-
-------------------------------------------------
-PHASE 5 – Control‑flow & Stack Ops
-------------------------------------------------
-Scope  
-JSR, RTS, BRK, RTI, all branches, PHA/PLA/PHP/PLP, TXS/TSX.
-
-Assumptions  
-• Stack page is `$0100–$01FF` with post‑decrement semantics (see §7).
-
-Deliverables  
-• Helpers `push8`, `push16`, `pop8`, `pop16` that manipulate `SP` and `mem`.  
-• Complete implementation of control‑flow opcodes.
-
-Tests  
-• `test/StackOps.t.sol` – push/pop round‑trips, RTS returning to correct `PC+1`.  
-• Branch tests that cover page‑cross penalties.
-
-------------------------------------------------
-PHASE 6 – Interrupt Controller
-------------------------------------------------
-Scope  
-RESET, IRQ, NMI logic; vector fetch; BRK behaviour with B flag.
-
-Deliverables  
-• `triggerIRQ()` and `triggerNMI()` external calls.  
-• Internal `_serviceInterrupt(vectorAddr, setBFlag)`.
-
-Tests  
-• `test/Interrupts.t.sol` – simulate BRK, IRQ, NMI and assert pushed stack bytes & `PC` after handler jump.
-
-------------------------------------------------
-PHASE 7 – Cycle‑Counting & Timing Accuracy (optional v1)
-------------------------------------------------
-If you need cycle‑exact behaviour (for raster demos etc.), wire page‑cross flags and branch penalties into `CPU.cycles`.  
-Test with known instruction traces.
-
-------------------------------------------------
-PHASE 8 – BASIC ROM Integration
-------------------------------------------------
-Scope  
-• Load an open‑source 6502 BASIC (e.g., Woz Mon or Microsoft BASIC) into memory.  
-• Provide a thin wrapper `syscall(uint16 addr)` to call into ROM routines for IO (e.g., print/keyboard).
-
-Deliverables  
-• Script `script/LoadRom.s.sol` that deploys emulator + writes ROM bytes.  
-• Public function `sendKey(uint8 ascii)` and event `CharOut(uint8)` to handle IO.
-
-Tests  
-• End‑to‑end test that boots ROM, types `PRINT 2+2` keystrokes, runs, and captures `CharOut` events containing `4`.
-
-------------------------------------------------
-PHASE 9 – High‑level BASIC Program Runner
-------------------------------------------------
-Scope  
-• Convenience function `run(bytes program)` that:  
-  – resets CPU,  
-  – pastes BASIC program into RAM buffer,  
-  – triggers `SYS` token (if ROM requires),  
-  – executes until `BRK` or cycle budget reached.
-
-Deliverables  
-• Gas‑metered loop with safety break after N cycles to avoid DoS.  
-• Event `ProgramHalted(uint cyclesUsed)`.
-
-Tests  
-• Multiple sample BASIC listings (loops, branching, string ops).  
-• Gas profiling to ensure per‑instruction cost is bounded.
-
-------------------------------------------------
-Branch & CI Workflow (applies to every phase)
-------------------------------------------------
-1. Start a short‑lived feature branch per phase (`feat/6502‑phase‑N`).  
-2. After lint + build + tests pass locally:  
-   – `git add . && git commit -m "Phase N: …"`  
-   – Open PR → get review (remember: ask reviewer to keep us focused).  
-3. Merge **into the parent integration branch, never main**.  
-4. Delete feature branch.
-
-------------------------------------------------
-Future Nice‑to‑Haves
-------------------------------------------------
-• CMOS 65C02 opcodes (§8).  
-• Cycle‑exact bus timing (Appendix A) for peripheral emulation.  
-• Verifier contract to replay traces off‑chain for cheaper on‑chain verification.
-
-This roadmap should let us grow functionality incrementally, keep tests fast, and respect your branching/linting conventions.
-
-================
-File: script/Counter.s.sol
-================
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
-
-import {Script, console} from "forge-std/Script.sol";
-import {Counter} from "../src/Counter.sol";
-
-contract CounterScript is Script {
-    Counter public counter;
-
-    function setUp() public {}
-
-    function run() public {
-        vm.startBroadcast();
-
-        counter = new Counter();
-
-        vm.stopBroadcast();
-    }
-}
-
-================
-File: src/Counter.sol
-================
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
-
-contract Counter {
-    uint256 public number;
-
-    function setNumber(uint256 newNumber) public {
-        number = newNumber;
-    }
-
-    function increment() public {
-        number++;
-    }
-}
-
-================
-File: test/Counter.t.sol
-================
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
-
-import {Test, console} from "forge-std/Test.sol";
-import {Counter} from "../src/Counter.sol";
-
-contract CounterTest is Test {
-    Counter public counter;
-
-    function setUp() public {
-        counter = new Counter();
-        counter.setNumber(0);
-    }
-
-    function test_Increment() public {
-        counter.increment();
-        assertEq(counter.number(), 1);
-    }
-
-    function testFuzz_SetNumber(uint256 x) public {
-        counter.setNumber(x);
-        assertEq(counter.number(), x);
-    }
-}
-
-================
-File: test/EmulatorInit.t.sol
-================
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-import "../src/Emulator6502.sol";
-
-/// @title EmulatorInitTest – validates power‑on reset state for Phase 0
-contract EmulatorInitTest is Test {
-    Emulator6502 private emu;
-
-    function setUp() public {
-        emu = new Emulator6502();
-    }
-
-    function test_PowerOnState() public {
-        (uint8 A, uint8 X, uint8 Y, uint8 SP, uint16 PC, uint8 P, uint64 cycles) = emu.cpu();
-
-        assertEq(uint256(A), 0, "A != 0");
-        assertEq(uint256(X), 0, "X != 0");
-        assertEq(uint256(Y), 0, "Y != 0");
-        assertEq(uint256(SP), 0xfd, "SP != 0xfd");
-        assertEq(uint256(PC), 0, "PC != 0");
-        assertEq(uint256(P), 1 << 2, "P != I flag");
-        assertEq(cycles, 0, "cycles != 0");
-    }
-}
-
-================
-File: test/Memory.t.sol
-================
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-
-import "forge-std/Test.sol";
-import "../src/Emulator6502.sol";
-
-contract MemoryTest is Test {
-    Emulator6502 internal emu;
-
-    function setUp() public {
-        emu = new Emulator6502();
-    }
-
-    function test_ReadWriteMemory() public {
-        uint16 addr = 0x1234;
-        uint8 value = 0x42;
-
-        emu.poke8(addr, value);
-        uint8 readVal = emu.peek8(addr);
-
-        assertEq(readVal, value, "Memory mismatch");
-    }
-
-    function test_ZeroPageAndStack() public {
-        emu.poke8(0x00ff, 0xaa);
-        assertEq(emu.peek8(0x00ff), 0xaa);
-
-        emu.poke8(0x01fe, 0xbb);
-        assertEq(emu.peek8(0x01fe), 0xbb);
-    }
-}
-
-================
 File: test/RegisterAccess.t.sol
 ================
 // SPDX-License-Identifier: MIT
@@ -26980,6 +27202,299 @@ contract RegisterAccessTest is Test {
         // Clear I flag
         emu.testSetFlag(2, false);
         assertFalse(emu.testGetFlag(2));
+    }
+}
+
+================
+File: test/SBCTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract SBCTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P, ) = emu.cpu();
+        return (P & mask) != 0;
+    }
+
+    function test_SBC_NoBorrow() public {
+        // A=0x03, carry set => subtract 0x01 => 0x02, carry stays 1
+        emu.testSetPC(0xA000);
+        emu.testSetA(0x03);
+        emu.testSetFlag(0, true); // carry = 1 (no borrow)
+        emu.poke8(0xA000, 0xE9); // SBC #imm
+        emu.poke8(0xA001, 0x01);
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x02);
+        assertTrue(_flag(1 << 0)); // Carry
+        assertFalse(_flag(1 << 1)); // Zero
+        assertFalse(_flag(1 << 7)); // Negative
+        assertFalse(_flag(1 << 6)); // Overflow
+    }
+
+    function test_SBC_Borrow() public {
+        // A=0x00, subtract 0x01 => 0xFF, carry clear
+        emu.testSetPC(0xA100);
+        emu.testSetA(0x00);
+        emu.testSetFlag(0, true);
+        emu.poke8(0xA100, 0xE9);
+        emu.poke8(0xA101, 0x01);
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0xFF);
+        assertFalse(_flag(1 << 0)); // Carry cleared (borrow)
+        assertFalse(_flag(1 << 1)); // Zero
+        assertTrue(_flag(1 << 7)); // Negative
+    }
+
+    function test_SBC_Overflow() public {
+        // A=0x80, subtract 0x7F => 0x01, overflow set
+        emu.testSetPC(0xA200);
+        emu.testSetA(0x80);
+        emu.testSetFlag(0, true);
+        emu.poke8(0xA200, 0xE9);
+        emu.poke8(0xA201, 0x7F);
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x01);
+        assertTrue(_flag(1 << 6)); // Overflow
+        assertFalse(_flag(1 << 7)); // Negative
+    }
+}
+
+================
+File: test/ShiftRotateTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract ShiftRotateTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P, ) = emu.cpu();
+        return (P & mask) != 0;
+    }
+
+    function test_ASLAccumulator() public {
+        // A=0x80 (1000 0000) after ASL => 0x00, C=1, Z=1, N=0
+        emu.testSetPC(0xB300);
+        emu.testSetA(0x80);
+        emu.poke8(0xB300, 0x0A); // ASL A
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x00);
+        assertTrue(_flag(1 << 0)); // Carry
+        assertTrue(_flag(1 << 1)); // Zero
+        assertFalse(_flag(1 << 7)); // Negative
+    }
+
+    function test_LSRAccumulator() public {
+        // A=0x01 => 0x00, C=1, Z=1
+        emu.testSetPC(0xB400);
+        emu.testSetA(0x01);
+        emu.poke8(0xB400, 0x4A); // LSR A
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x00);
+        assertTrue(_flag(1 << 0)); // Carry
+        assertTrue(_flag(1 << 1)); // Zero
+    }
+
+    function test_ROLAccumulator_WithCarryIn() public {
+        // Set carry =1, A=0x01 (0000 0001) => result 0x03, C=0
+        emu.testSetPC(0xB500);
+        emu.testSetA(0x01);
+        emu.testSetFlag(0, true); // carry in
+        emu.poke8(0xB500, 0x2A); // ROL A
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x03);
+        assertFalse(_flag(1 << 0)); // Carry cleared (bit7 was 0)
+        assertFalse(_flag(1 << 7)); // Negative
+    }
+
+    function test_RORAccumulator_WithCarryIn() public {
+        // Set carry=1, A=0x02 (0000 0010) => After ROR: 0x81, C=0x0 (bit0 of original)
+        emu.testSetPC(0xB600);
+        emu.testSetA(0x02);
+        emu.testSetFlag(0, true); // carry in
+        emu.poke8(0xB600, 0x6A); // ROR A
+        emu.step();
+        (uint8 A,, , , , ,) = emu.cpu();
+        assertEq(A, 0x81);
+        assertFalse(_flag(1 << 0)); // Carry cleared (original bit0 =0)
+        assertTrue(_flag(1 << 7)); // Negative set
+    }
+}
+
+================
+File: test/StackJSRTest.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract StackJSRTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function test_JSR_RTS() public {
+        // Program: JSR $9000 ; (subroutine) RTS
+        emu.testSetPC(0x8000);
+        emu.poke8(0x8000, 0x20); // JSR
+        emu.poke8(0x8001, 0x00);
+        emu.poke8(0x8002, 0x90);
+        emu.poke8(0x9000, 0x60); // RTS
+
+        emu.step(); // Execute JSR
+        (, , , uint8 spAfterJSR,, ,) = emu.cpu();
+        // Stack pointer should be 0xFB (two pushes)
+        assertEq(spAfterJSR, 0xFB);
+
+        emu.step(); // Execute RTS
+        (, , , uint8 spAfterRTS, uint16 pcAfterRTS,,) = emu.cpu();
+        assertEq(spAfterRTS, 0xFD);
+        assertEq(pcAfterRTS, 0x8003); // Return to after JSR
+    }
+}
+
+================
+File: test/StackPrimitives.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract StackPrimitivesTest is Test {
+    Emulator6502 emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function test_PushPop8() public {
+        // initial SP = 0xFD per reset state
+        (, , , uint8 spInitial, , ,) = emu.cpu();
+        assertEq(spInitial, 0xFD);
+
+        emu.testPush8(0x42);
+        (, , , uint8 spAfterPush, , ,) = emu.cpu();
+        assertEq(spAfterPush, 0xFC, "SP should post-decrement");
+
+        uint8 val = emu.testPop8();
+        assertEq(val, 0x42, "popped value mismatch");
+
+        (, , , uint8 spAfterPop, , ,) = emu.cpu();
+        assertEq(spAfterPop, 0xFD, "SP should return to original");
+    }
+
+    function test_PushPop16() public {
+        // Push 0xBEEF and pop
+        (, , , uint8 spStart, , ,) = emu.cpu();
+        emu.testPush16(0xBEEF);
+        (, , , uint8 spAfterPush, , ,) = emu.cpu();
+        assertEq(spAfterPush, spStart - 2);
+
+        uint16 val = emu.testPop16();
+        assertEq(val, 0xBEEF);
+        (, , , uint8 spAfterPop, , ,) = emu.cpu();
+        assertEq(spAfterPop, spStart);
+    }
+
+    function test_PHA_PLA() public {
+        emu.testSetPC(0x8000);
+        emu.testSetA(0x7F);
+        emu.poke8(0x8000, 0x48); // PHA
+        emu.poke8(0x8001, 0x68); // PLA
+
+        emu.step(); // PHA
+        emu.step(); // PLA
+
+        (uint8 A, , , uint8 sp, , uint8 P,) = emu.cpu();
+        assertEq(A, 0x7F);
+        assertEq(sp, 0xFD); // stack pointer back
+        // Z flag should be 0, N flag 0 since 0x7F positive
+        bool Z = (P & 0x02)!=0;
+        bool N = (P & 0x80)!=0;
+        assertFalse(Z);
+        assertFalse(N);
+    }
+
+    function test_PHP_PLP() public {
+        // Set flags pattern, push and pull
+        emu.testSetFlag(0, true); // C
+        emu.testSetFlag(7, true); // N
+
+        emu.testSetPC(0x9000);
+        emu.poke8(0x9000, 0x08); // PHP
+        emu.poke8(0x9001, 0x28); // PLP
+
+        emu.step();
+        // Modify flags to check PLP restoration
+        emu.testSetFlag(0, false);
+        emu.testSetFlag(7, false);
+        emu.step();
+
+        (, , , , , uint8 P,) = emu.cpu();
+        assertTrue((P & 0x01)!=0); // C restored
+        assertTrue((P & 0x80)!=0); // N restored
+    }
+
+    function _flag(uint8 mask) internal view returns (bool) {
+        (, , , , , uint8 P,) = emu.cpu();
+        return (P & mask)!=0;
+    }
+
+    function test_TXS_TSX() public {
+        // X -> SP
+        emu.testSetX(0x10);
+        emu.testSetPC(0x9100);
+        emu.poke8(0x9100, 0x9A); // TXS
+        emu.poke8(0x9101, 0xBA); // TSX
+        emu.step();
+        (, , , uint8 spAfterTxs,, ,) = emu.cpu();
+        assertEq(spAfterTxs, 0x10);
+
+        emu.step();
+        (, uint8 X,, , , uint8 P,) = emu.cpu();
+        assertEq(X, 0x10);
+        // Z and N clear
+        assertFalse(_flag(1<<1));
+        assertFalse(_flag(1<<7));
+
+        // Now set SP to 0x80 negative test
+        emu.testSetSP(0x80);
+        emu.testSetPC(0x9200);
+        emu.poke8(0x9200, 0xBA);
+        emu.step();
+        (, uint8 X2,, , , uint8 P2,) = emu.cpu();
+        assertEq(X2, 0x80);
+        assertTrue((P2 & 0x80)!=0); // N set
     }
 }
 
@@ -27241,10 +27756,289 @@ $ cast --help
 ```
 
 ================
+File: instructions/implementation.md
+================
+Below is a high‑level, yet concrete, implementation roadmap that takes you from a blank contract to an on‑chain 6502 capable of running BASIC programs.  
+At each stage I call out (1) scope, (2) key assumptions, (3) deliverables, (4) recommended tests, and (5) branch / CI hygiene so the work fits cleanly with your house rules.
+
+------------------------------------------------
+PHASE 0 – Foundation & Project‑level Plumbing
+------------------------------------------------
+1. Create a new feature branch `feat/6502-core‑scaffolding`.
+2. Add `forge‑std` test helpers and a basic Foundry project layout (`src/`, `test/`, `script/`).
+3. Enforce linting (`solhint`, `slither‑json`) via `pre‑commit` or CI.  
+4. Add a minimal `Emulator6502.sol` shell that merely stores registers and exposes a `step()` stub.
+5. Write a smoke test `test/EmulatorInit.t.sol` that:
+   • deploys the contract  
+   • asserts all registers & flags power‑on values (per §5 of instructions).
+
+------------------------------------------------
+PHASE 1 – Core Data Structures
+------------------------------------------------
+Scope  
+• Registers: A, X, Y, SP, PC, P (flags).  
+• Memory array: fixed `bytes` of size 64 K.  
+• Helpers to get/set flags.
+
+Assumptions  
+• Store memory in a `bytes` array inside the contract; later we may map it to storage pages for gas efficiency.  
+• Contract can be initialised with a `bytes` ROM image.
+
+Deliverables  
+• `struct CPU` holding the 6 registers + cycle counter.  
+• `mapping(uint16 => uint8) mem;` or `bytes memory mem` plus helpers `read8`, `write8`.
+
+Tests  
+• `test/RegisterAccess.t.sol` – unit tests for flag helpers (set/clear/toggle/serialize).  
+• `test/Memory.t.sol` – reads & writes, zero‑page and stack page boundaries.
+
+------------------------------------------------
+PHASE 2 – Addressing‑mode Helpers
+------------------------------------------------
+Scope  
+Implement 13 NMOS addressing modes (§3).
+
+Deliverables  
+• Pure/constant internal functions that, given `CPU` & `bytes mem`, compute the effective address plus flags about page‑cross penalties.
+
+Tests  
+• Table‑driven test `test/AddressingModes.t.sol` using vectors from real 6502 docs.  
+• Cross‑check page‑cross cycle penalty flag.
+
+------------------------------------------------
+PHASE 3 – Opcode Table & Dispatcher
+------------------------------------------------
+Scope  
+• A `struct OpInfo { function(CPU storage, bytes storage) internal returns (uint cycles) handler; uint8 bytes; uint8 baseCycles; bool pagePenalty; }`.  
+• Populate a 256‑entry constant array at deployment.
+
+Assumptions  
+• Illegal opcodes revert for v1.
+
+Deliverables  
+• `executeNext()` that:  
+  1. fetches opcode at `PC`,  
+  2. looks up `OpInfo`,  
+  3. calls handler,  
+  4. updates cycle counter.
+
+Tests  
+• `test/OpcodeMatrix.t.sol` that loops all 256 entries and ensures non‑implemented opcodes revert with an `IllegalOpcode()` error.
+
+------------------------------------------------
+PHASE 4 – ALU & Flag Logic
+------------------------------------------------
+Scope  
+ADC, SBC, AND, ORA, EOR, CMP, CPX, CPY, BIT + shifts/rotates.  
+Decimal mode optional but recommended (see §6 caveats).
+
+Deliverables  
+• Internal pure functions `adc`, `sbc` etc. returning result + updated flags.  
+• Unit opcode handlers that glue addressing‑mode helpers with ALU helpers.
+
+Tests  
+• Property‑based tests for ADC/SBC overflow & carry.  
+• Exhaustive tables for BIT, CMP etc.  
+• Decimal mode golden vectors from real hardware trace.
+
+------------------------------------------------
+PHASE 5 – Control‑flow & Stack Ops
+------------------------------------------------
+Scope  
+JSR, RTS, BRK, RTI, all branches, PHA/PLA/PHP/PLP, TXS/TSX.
+
+Assumptions  
+• Stack page is `$0100–$01FF` with post‑decrement semantics (see §7).
+
+Deliverables  
+• Helpers `push8`, `push16`, `pop8`, `pop16` that manipulate `SP` and `mem`.  
+• Complete implementation of control‑flow opcodes.
+
+Tests  
+• `test/StackOps.t.sol` – push/pop round‑trips, RTS returning to correct `PC+1`.  
+• Branch tests that cover page‑cross penalties.
+
+Sub‑phases (incremental PR plan)  
+• 5.0 Stack byte helpers – implement `_push8`, `_pop8`; unit test push/pop round‑trip.  
+• 5.1 16‑bit helpers – `_push16`, `_pop16`; test 16‑bit round‑trip.  
+• 5.2 Accumulator stack ops – opcodes PHA (0x48), PLA (0x68) with flag updates and tests.  
+• 5.3 Processor status ops – PHP (0x08), PLP (0x28). Ensure B and unused bits handling; tests.  
+• 5.4 Stack‑pointer transfer – TXS (0x9A) and TSX (0xBA); tests for Z/N flags.  
+• 5.5 Sub‑routine flow – JSR (0x20) and RTS (0x60); tests that verify return address.  
+• 5.6 Relative branch helper – finalize `addrRelative` and `_branch` function.  
+• 5.7 Branch opcodes – implement BPL, BMI, BVC, BVS, BCC, BCS, BEQ, BNE with tests for taken/untaken and page‑crossing.
+
+Each sub‑phase should compile and pass its new tests before proceeding to the next.
+
+------------------------------------------------
+PHASE 6 – Interrupt Controller
+------------------------------------------------
+Scope  
+RESET, IRQ, NMI logic; vector fetch; BRK behaviour with B flag.
+
+Deliverables  
+• `triggerIRQ()` and `triggerNMI()` external calls.  
+• Internal `_serviceInterrupt(vectorAddr, setBFlag)`.
+
+Tests  
+• `test/Interrupts.t.sol` – simulate BRK, IRQ, NMI and assert pushed stack bytes & `PC` after handler jump.
+
+------------------------------------------------
+PHASE 7 – Cycle‑Counting & Timing Accuracy (optional v1)
+------------------------------------------------
+If you need cycle‑exact behaviour (for raster demos etc.), wire page‑cross flags and branch penalties into `CPU.cycles`.  
+Test with known instruction traces.
+
+------------------------------------------------
+PHASE 8 – BASIC ROM Integration
+------------------------------------------------
+Scope  
+• Load an open‑source 6502 BASIC (e.g., Woz Mon or Microsoft BASIC) into memory.  
+• Provide a thin wrapper `syscall(uint16 addr)` to call into ROM routines for IO (e.g., print/keyboard).
+
+Deliverables  
+• Script `script/LoadRom.s.sol` that deploys emulator + writes ROM bytes.  
+• Public function `sendKey(uint8 ascii)` and event `CharOut(uint8)` to handle IO.
+
+Tests  
+• End‑to‑end test that boots ROM, types `PRINT 2+2` keystrokes, runs, and captures `CharOut` events containing `4`.
+
+------------------------------------------------
+PHASE 9 – High‑level BASIC Program Runner
+------------------------------------------------
+Scope  
+• Convenience function `run(bytes program)` that:  
+  – resets CPU,  
+  – pastes BASIC program into RAM buffer,  
+  – triggers `SYS` token (if ROM requires),  
+  – executes until `BRK` or cycle budget reached.
+
+Deliverables  
+• Gas‑metered loop with safety break after N cycles to avoid DoS.  
+• Event `ProgramHalted(uint cyclesUsed)`.
+
+Tests  
+• Multiple sample BASIC listings (loops, branching, string ops).  
+• Gas profiling to ensure per‑instruction cost is bounded.
+
+------------------------------------------------
+Branch & CI Workflow (applies to every phase)
+------------------------------------------------
+1. Start a short‑lived feature branch per phase (`feat/6502‑phase‑N`).  
+2. After lint + build + tests pass locally:  
+   – `git add . && git commit -m "Phase N: …"`  
+   – Open PR → get review (remember: ask reviewer to keep us focused).  
+3. Merge **into the parent integration branch, never main**.  
+4. Delete feature branch.
+
+------------------------------------------------
+Future Nice‑to‑Haves
+------------------------------------------------
+• CMOS 65C02 opcodes (§8).  
+• Cycle‑exact bus timing (Appendix A) for peripheral emulation.  
+• Verifier contract to replay traces off‑chain for cheaper on‑chain verification.
+
+This roadmap should let us grow functionality incrementally, keep tests fast, and respect your branching/linting conventions.
+
+================
+File: test/AddressingModes.t.sol
+================
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import "../src/Emulator6502.sol";
+
+contract AddressingModesTest is Test {
+    Emulator6502 internal emu;
+
+    function setUp() public {
+        emu = new Emulator6502();
+    }
+
+    function test_Immediate() public {
+        // Write literal 0x99 at PC=0x8000
+        emu.testSetPC(0x8000);
+        emu.poke8(0x8000, 0x99);
+
+        uint16 addr = emu.addrImmediate();
+        assertEq(addr, 0x8000);
+        assertEq(emu.peek8(addr), 0x99);
+    }
+
+    function test_ZeroPageXWrap() public {
+        emu.testSetPC(0x9000);
+        emu.testSetX(0x0f);
+        emu.poke8(0x9000, 0xf8); // base addr 0xf8
+        uint16 addr = emu.addrZeroPageX();
+        // expect wrap: 0xf8 + 0x0f = 0x07
+        assertEq(addr, 0x0007);
+    }
+
+    function test_AbsoluteXPageCross() public {
+        emu.testSetPC(0xA000);
+        emu.testSetX(0x10);
+        // write low byte 0xFF, high 0x20 → base 0x20FF, +0x10 -> 0x210F crossing
+        emu.poke8(0xA000, 0xFF);
+        emu.poke8(0xA001, 0x20);
+        (uint16 addr, bool crossed) = emu.addrAbsoluteX();
+        assertEq(addr, 0x210F);
+        assertTrue(crossed);
+    }
+
+    function test_ZeroPageYWrap() public {
+        emu.testSetPC(0xB000);
+        emu.testSetY(0x0d);
+        emu.poke8(0xB000, 0xF6); // base 0xF6
+        uint16 addr = emu.addrZeroPageY();
+        // 0xF6 + 0x0d = 0x03 with wrap
+        assertEq(addr, 0x0003);
+    }
+
+    function test_RelativeForward() public {
+        emu.testSetPC(0xB100);
+        emu.poke8(0xB100, 0x05); // +5
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xB106); // PC after fetch 0xB101 +5 =0xB106
+        assertFalse(crossed);
+    }
+
+    function test_RelativeBackwardNoPageCross() public {
+        emu.testSetPC(0xB1F0);
+        emu.poke8(0xB1F0, 0xF0); // -16 (0xF0 signed)
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xB1F1 - 0x10); // 0xB1F1 (after fetch) -16 = 0xB1E1
+        assertFalse(crossed);
+    }
+
+    function test_RelativeBackwardPageCross() public {
+        emu.testSetPC(0xC000);
+        emu.poke8(0xC000, 0x80); // -128 (0x80 signed)
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xBF81); // 0xC001 - 128 = 0xBF81
+        assertTrue(crossed);
+    }
+
+    function test_IndirectPageBug() public {
+        // Pointer = 0x12FF (low FF, high 12)
+        emu.testSetPC(0xD000);
+        emu.poke8(0xD000, 0xFF); // low byte ptr
+        emu.poke8(0xD001, 0x12); // high byte ptr
+        // Write target low/high obeying wrap bug
+        emu.poke8(0x12FF, 0x34); // low target byte
+        emu.poke8(0x1200, 0x12); // high target byte (wrap within page)
+        uint16 addr = emu.addrIndirect();
+        assertEq(addr, 0x1234);
+    }
+}
+
+================
 File: src/Emulator6502.sol
 ================
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
+
+import "./OpcodeTable.sol";
 
 /// @title Emulator6502 – Minimal 6502 CPU skeleton
 /// @notice Phase 0 shell that only initialises registers to power‑on state
@@ -27266,6 +28060,10 @@ contract Emulator6502 {
 
     CPU public cpu;
 
+    // Pending interrupt lines
+    bool private irqPending;
+    bool private nmiPending;
+
     /*//////////////////////////////////////////////////////////////////////////
                                    FLAGS
     //////////////////////////////////////////////////////////////////////////*/
@@ -27280,41 +28078,43 @@ contract Emulator6502 {
     uint8 private constant FLAG_CARRY     = 0;
 
     /*//////////////////////////////////////////////////////////////////////////
+                                   INTERRUPT VECTORS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    uint16 private constant VECTOR_NMI   = 0xFFFA;
+    uint16 private constant VECTOR_RESET = 0xFFFC;
+    uint16 private constant VECTOR_IRQ   = 0xFFFE;
+
+    /*//////////////////////////////////////////////////////////////////////////
                                    CONSTRUCTOR
     //////////////////////////////////////////////////////////////////////////*/
 
     constructor() {
-        _powerOnReset();
         _initMemory();
+        _powerOnReset();
     }
 
     /*//////////////////////////////////////////////////////////////////////////
                                    PUBLIC API
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Executes one instruction (currently only implements LDA #imm)
+    /// @notice Executes one 6502 instruction and services pending IRQs
     function step() external {
-        uint8 opcode = _fetch8();
+        // Service IRQ if pending and interrupts are enabled
+        _handleInterrupts();
 
-        if (opcode == 0xA9) {
-            _opLDAImmediate();
-        } else if (opcode == 0xA5) {
-            _opLDAZeroPage();
-        } else if (opcode == 0xB5) {
-            _opLDAZeroPageX();
-        } else if (opcode == 0xAD) {
-            _opLDAAbsolute();
-        } else if (opcode == 0xBD) {
-            _opLDAAbsoluteX();
-        } else if (opcode == 0xB9) {
-            _opLDAAbsoluteY();
-        } else if (opcode == 0xA1) {
-            _opLDAIndexedIndirect();
-        } else if (opcode == 0xB1) {
-            _opLDAIndirectIndexed();
-        } else {
-            revert("OpcodeNotImplemented");
-        }
+        uint8 opcode = _fetch8();
+        _legacyDispatch(opcode);
+    }
+
+    /// @notice Assert the IRQ line (level sensitive). Will be handled on next step if I flag is clear.
+    function triggerIRQ() external {
+        irqPending = true;
+    }
+
+    /// @notice Trigger a Non‑Maskable Interrupt (edge‑trigger). Always serviced on next step regardless of I flag.
+    function triggerNMI() external {
+        nmiPending = true;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -27328,8 +28128,141 @@ contract Emulator6502 {
         cpu.Y = 0;
         cpu.SP = 0xfd; // Stack pointer after reset (§5)
         cpu.P = uint8(1 << FLAG_INTERRUPT); // I flag set, others cleared
-        cpu.PC = 0; // Vector fetch not implemented yet
+
+        // Fetch reset vector (little‑endian) from memory
+        uint8 lo = _read8(VECTOR_RESET);
+        uint8 hi = _read8(VECTOR_RESET + 1);
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
+
+        // Clear pending interrupts
+        irqPending = false;
+        nmiPending = false;
+
         cpu.cycles = 0;
+    }
+
+    // --- ADC helpers ---
+
+    function _adc(uint8 value) internal {
+        uint8 a = cpu.A;
+        uint8 carryIn = _getFlag(FLAG_CARRY) ? 1 : 0;
+        uint16 sum = uint16(a) + uint16(value) + uint16(carryIn);
+        uint8 result = uint8(sum);
+
+        // Carry flag
+        _setFlag(FLAG_CARRY, sum > 0xFF);
+        // Overflow flag: set if (~(A ^ V) & (A ^ R)) bit 7 set
+        bool overflow = ((~(a ^ value) & (a ^ result)) & 0x80) != 0;
+        _setFlag(FLAG_OVERFLOW, overflow);
+
+        cpu.A = result;
+        _updateZN(result);
+    }
+
+    function _opADCImmediate() internal {
+        _adc(_fetch8());
+    }
+
+    function _opADCZeroPage() internal {
+        uint8 addr = _fetch8();
+        _adc(_read8(uint16(addr)));
+    }
+
+    function _opADCZeroPageX() internal {
+        uint8 base = _fetch8();
+        unchecked { base += cpu.X; }
+        _adc(_read8(uint16(base)));
+    }
+
+    function _opADCAbsolute() internal {
+        uint16 addr = _fetch16();
+        _adc(_read8(addr));
+    }
+
+    function _opADCAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        _adc(_read8(addr));
+    }
+
+    function _opADCAbsoluteY() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.Y;
+        _adc(_read8(addr));
+    }
+
+    function _opADCIndexedIndirect() internal {
+        uint8 ptr = _fetch8();
+        unchecked { ptr += cpu.X; }
+        uint8 lo = _read8(uint16(ptr));
+        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint16 addr = uint16(lo) | (uint16(hi) << 8);
+        _adc(_read8(addr));
+    }
+
+    function _opADCIndirectIndexed() internal {
+        uint8 ptr = _fetch8();
+        uint8 lo = _read8(uint16(ptr));
+        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint16 base = uint16(lo) | (uint16(hi) << 8);
+        uint16 addr = base + cpu.Y;
+        _adc(_read8(addr));
+    }
+
+    // --- SBC helpers (uses ADC with value ^ 0xFF) ---
+
+    function _sbc(uint8 value) internal {
+        _adc(value ^ 0xFF);
+    }
+
+    function _opSBCImmediate() internal {
+        _sbc(_fetch8());
+    }
+
+    function _opSBCZeroPage() internal {
+        uint8 addr = _fetch8();
+        _sbc(_read8(uint16(addr)));
+    }
+
+    function _opSBCZeroPageX() internal {
+        uint8 base = _fetch8();
+        unchecked { base += cpu.X; }
+        _sbc(_read8(uint16(base)));
+    }
+
+    function _opSBCAbsolute() internal {
+        uint16 addr = _fetch16();
+        _sbc(_read8(addr));
+    }
+
+    function _opSBCAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        _sbc(_read8(addr));
+    }
+
+    function _opSBCAbsoluteY() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.Y;
+        _sbc(_read8(addr));
+    }
+
+    function _opSBCIndexedIndirect() internal {
+        uint8 ptr = _fetch8();
+        unchecked { ptr += cpu.X; }
+        uint8 lo = _read8(uint16(ptr));
+        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint16 addr = uint16(lo) | (uint16(hi) << 8);
+        _sbc(_read8(addr));
+    }
+
+    function _opSBCIndirectIndexed() internal {
+        uint8 ptr = _fetch8();
+        uint8 lo = _read8(uint16(ptr));
+        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint16 base = uint16(lo) | (uint16(hi) << 8);
+        uint16 addr = base + cpu.Y;
+        _sbc(_read8(addr));
     }
 
     // --- LDA helpers ---
@@ -27469,6 +28402,31 @@ contract Emulator6502 {
         cpu.Y = newY;
     }
 
+    function testSetA(uint8 newA) external {
+        cpu.A = newA;
+    }
+
+    // Stack helper wrappers for tests
+    function testPush8(uint8 val) external {
+        _push8(val);
+    }
+
+    function testPop8() external returns (uint8) {
+        return _pop8();
+    }
+
+    function testPush16(uint16 val) external {
+        _push16(val);
+    }
+
+    function testPop16() external returns (uint16) {
+        return _pop16();
+    }
+
+    function testSetSP(uint8 newSP) external {
+        cpu.SP = newSP;
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                           FETCH & ADDRESSING HELPERS
     //////////////////////////////////////////////////////////////////////////*/
@@ -27536,11 +28494,478 @@ contract Emulator6502 {
     function addrIndirectIndexed() external returns (uint16 addr, bool pageCrossed) {
         uint8 ptr = _fetch8();
         uint8 lo = _read8(uint16(ptr));
-        uint8 hi;
-        unchecked { hi = _read8(uint16(uint8(ptr + 1))); }
+        uint8 hi = _read8(uint16(uint8(ptr + 1)));
         uint16 base = uint16(lo) | (uint16(hi) << 8);
         addr = base + cpu.Y;
         pageCrossed = (base & 0xff00) != (addr & 0xff00);
+    }
+
+    /// @notice Zero‑page,Y addressing
+    function addrZeroPageY() external returns (uint16 addr) {
+        uint8 base = _fetch8();
+        unchecked { base += cpu.Y; }
+        addr = uint16(base);
+    }
+
+    /// @notice Relative addressing – returns branch target and pageCross flag
+    function addrRelative() external returns (uint16 target, bool pageCrossed) {
+        int8 offset = int8(uint8(_fetch8()));
+        uint16 pc = cpu.PC;
+        int32 calc = int32(uint32(pc)) + int32(offset);
+        target = uint16(uint32(calc) & 0xFFFF);
+        pageCrossed = (pc & 0xFF00) != (target & 0xFF00);
+    }
+
+    /// @notice Absolute Indirect addressing (JMP ($addr)) with 6502 page bug
+    function addrIndirect() external returns (uint16 addr) {
+        uint16 ptr = _fetch16();
+        uint16 loAddr = ptr;
+        uint16 hiAddr = (ptr & 0xFF00) | uint16(uint8(ptr + 1));
+        uint8 lo = _read8(loAddr);
+        uint8 hi = _read8(hiAddr);
+        addr = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    // --- AND helpers ---
+
+    function _and(uint8 value) internal {
+        uint8 res = cpu.A & value;
+        cpu.A = res;
+        _updateZN(res);
+    }
+
+    function _opANDImmediate() internal { _and(_fetch8()); }
+    function _opANDZeroPage() internal { _and(_read8(uint16(_fetch8()))); }
+    function _opANDZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _and(_read8(uint16(b))); }
+    function _opANDAbsolute() internal { _and(_read8(_fetch16())); }
+    function _opANDAbsoluteX() internal { uint16 base=_fetch16(); _and(_read8(base+cpu.X)); }
+    function _opANDAbsoluteY() internal { uint16 base=_fetch16(); _and(_read8(base+cpu.Y)); }
+    function _opANDIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 addr=uint16(_read8(uint16(p)))| (uint16(_read8(uint16(uint8(p+1))))<<8); _and(_read8(addr)); }
+    function _opANDIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _and(_read8(base+cpu.Y)); }
+
+    // --- ORA helpers ---
+    function _ora(uint8 value) internal { uint8 res = cpu.A | value; cpu.A = res; _updateZN(res);}    
+    function _opORAImmediate() internal { _ora(_fetch8()); }
+    function _opORAZeroPage() internal { _ora(_read8(uint16(_fetch8()))); }
+    function _opORAZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _ora(_read8(uint16(b))); }
+    function _opORAAbsolute() internal { _ora(_read8(_fetch16())); }
+    function _opORAAbsoluteX() internal { uint16 base=_fetch16(); _ora(_read8(base+cpu.X)); }
+    function _opORAAbsoluteY() internal { uint16 base=_fetch16(); _ora(_read8(base+cpu.Y)); }
+    function _opORAIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _ora(_read8(a)); }
+    function _opORAIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _ora(_read8(base+cpu.Y)); }
+
+    // --- EOR helpers ---
+    function _eor(uint8 value) internal { uint8 res = cpu.A ^ value; cpu.A = res; _updateZN(res);}    
+    function _opEORImmediate() internal { _eor(_fetch8()); }
+    function _opEORZeroPage() internal { _eor(_read8(uint16(_fetch8()))); }
+    function _opEORZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _eor(_read8(uint16(b))); }
+    function _opEORAbsolute() internal { _eor(_read8(_fetch16())); }
+    function _opEORAbsoluteX() internal { uint16 base=_fetch16(); _eor(_read8(base+cpu.X)); }
+    function _opEORAbsoluteY() internal { uint16 base=_fetch16(); _eor(_read8(base+cpu.Y)); }
+    function _opEORIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _eor(_read8(a)); }
+    function _opEORIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _eor(_read8(base+cpu.Y)); }
+
+    // --- BIT helper --- (affects Z = A & val ==0, N,V from val bits 7/6)
+    function _bit(uint8 val) internal {
+        _setFlag(FLAG_ZERO, (cpu.A & val) == 0);
+        _setFlag(FLAG_NEGATIVE, (val & 0x80)!=0);
+        _setFlag(FLAG_OVERFLOW, (val & 0x40)!=0);
+    }
+    function _opBITZeroPage() internal { _bit(_read8(uint16(_fetch8()))); }
+    function _opBITAbsolute() internal { _bit(_read8(_fetch16())); }
+
+    // --- Compare helpers ---
+    function _cmp(uint8 reg, uint8 value) internal {
+        uint8 diff;
+        unchecked { diff = reg - value; }
+        _setFlag(FLAG_CARRY, reg >= value);
+        _updateZN(diff);
+    }
+
+    // CMP (with A)
+    function _opCMPImmediate() internal { _cmp(cpu.A, _fetch8()); }
+    function _opCMPZeroPage() internal { _cmp(cpu.A, _read8(uint16(_fetch8()))); }
+    function _opCMPZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _cmp(cpu.A, _read8(uint16(b))); }
+    function _opCMPAbsolute() internal { _cmp(cpu.A, _read8(_fetch16())); }
+    function _opCMPAbsoluteX() internal { uint16 base=_fetch16(); _cmp(cpu.A, _read8(base+cpu.X)); }
+    function _opCMPAbsoluteY() internal { uint16 base=_fetch16(); _cmp(cpu.A, _read8(base+cpu.Y)); }
+    function _opCMPIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _cmp(cpu.A, _read8(a)); }
+    function _opCMPIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _cmp(cpu.A, _read8(base+cpu.Y)); }
+
+    // CPX
+    function _opCPXImmediate() internal { _cmp(cpu.X, _fetch8()); }
+    function _opCPXZeroPage() internal { _cmp(cpu.X, _read8(uint16(_fetch8()))); }
+    function _opCPXAbsolute() internal { _cmp(cpu.X, _read8(_fetch16())); }
+
+    // CPY
+    function _opCPYImmediate() internal { _cmp(cpu.Y, _fetch8()); }
+    function _opCPYZeroPage() internal { _cmp(cpu.Y, _read8(uint16(_fetch8()))); }
+    function _opCPYAbsolute() internal { _cmp(cpu.Y, _read8(_fetch16())); }
+
+    // --- Shift / Rotate helpers ---
+    function _asl(uint8 value) internal returns (uint8 res) {
+        _setFlag(FLAG_CARRY, (value & 0x80) != 0);
+        res = value << 1;
+        _updateZN(res);
+    }
+
+    function _lsr(uint8 value) internal returns (uint8 res) {
+        _setFlag(FLAG_CARRY, (value & 0x01) != 0);
+        res = value >> 1;
+        _updateZN(res);
+    }
+
+    function _rol(uint8 value) internal returns (uint8 res) {
+        uint8 carryIn = _getFlag(FLAG_CARRY) ? 1 : 0;
+        _setFlag(FLAG_CARRY, (value & 0x80) != 0);
+        res = (value << 1) | carryIn;
+        _updateZN(res);
+    }
+
+    function _ror(uint8 value) internal returns (uint8 res) {
+        uint8 carryIn = _getFlag(FLAG_CARRY) ? 0x80 : 0;
+        _setFlag(FLAG_CARRY, (value & 0x01) != 0);
+        res = (value >> 1) | carryIn;
+        _updateZN(res);
+    }
+
+    // ASL
+    function _opASLAccumulator() internal { cpu.A = _asl(cpu.A); }
+    function _opASLZeroPage() internal { uint16 addr = uint16(_fetch8()); uint8 v=_read8(addr); uint8 r=_asl(v); _write8(addr,r);} 
+    function _opASLZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr); uint8 r=_asl(v); _write8(addr,r);} 
+    function _opASLAbsolute() internal { uint16 addr = _fetch16(); uint8 v=_read8(addr); uint8 r=_asl(v); _write8(addr,r);} 
+    function _opASLAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr); uint8 r=_asl(v); _write8(addr,r);} 
+
+    // LSR
+    function _opLSRAccumulator() internal { cpu.A = _lsr(cpu.A); }
+    function _opLSRZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr); uint8 r=_lsr(v); _write8(addr,r);} 
+    function _opLSRZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr); uint8 r=_lsr(v); _write8(addr,r);} 
+    function _opLSRAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr); uint8 r=_lsr(v); _write8(addr,r);} 
+    function _opLSRAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr); uint8 r=_lsr(v); _write8(addr,r);} 
+
+    // ROL
+    function _opROLAccumulator() internal { cpu.A = _rol(cpu.A); }
+    function _opROLZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr); uint8 r=_rol(v); _write8(addr,r);} 
+    function _opROLZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr); uint8 r=_rol(v); _write8(addr,r);} 
+    function _opROLAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr); uint8 r=_rol(v); _write8(addr,r);} 
+    function _opROLAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr); uint8 r=_rol(v); _write8(addr,r);} 
+
+    // ROR
+    function _opRORAccumulator() internal { cpu.A = _ror(cpu.A); }
+    function _opRORZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr); uint8 r=_ror(v); _write8(addr,r);} 
+    function _opRORZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr); uint8 r=_ror(v); _write8(addr,r);} 
+    function _opRORAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr); uint8 r=_ror(v); _write8(addr,r);} 
+    function _opRORAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr); uint8 r=_ror(v); _write8(addr,r);} 
+
+    /// @dev Legacy if/else opcode dispatcher – will be removed once table is complete
+    function _legacyDispatch(uint8 opcode) internal {
+        if (opcode == 0xA9) {
+            _opLDAImmediate();
+        } else if (opcode == 0xA5) {
+            _opLDAZeroPage();
+        } else if (opcode == 0xB5) {
+            _opLDAZeroPageX();
+        } else if (opcode == 0xAD) {
+            _opLDAAbsolute();
+        } else if (opcode == 0xBD) {
+            _opLDAAbsoluteX();
+        } else if (opcode == 0xB9) {
+            _opLDAAbsoluteY();
+        } else if (opcode == 0xA1) {
+            _opLDAIndexedIndirect();
+        } else if (opcode == 0xB1) {
+            _opLDAIndirectIndexed();
+        } else if (opcode == 0x69) {
+            _opADCImmediate();
+        } else if (opcode == 0x65) {
+            _opADCZeroPage();
+        } else if (opcode == 0x75) {
+            _opADCZeroPageX();
+        } else if (opcode == 0x6D) {
+            _opADCAbsolute();
+        } else if (opcode == 0x7D) {
+            _opADCAbsoluteX();
+        } else if (opcode == 0x79) {
+            _opADCAbsoluteY();
+        } else if (opcode == 0x61) {
+            _opADCIndexedIndirect();
+        } else if (opcode == 0x71) {
+            _opADCIndirectIndexed();
+        } else if (opcode == 0xE9) {
+            _opSBCImmediate();
+        } else if (opcode == 0xE5) {
+            _opSBCZeroPage();
+        } else if (opcode == 0xF5) {
+            _opSBCZeroPageX();
+        } else if (opcode == 0xED) {
+            _opSBCAbsolute();
+        } else if (opcode == 0xFD) {
+            _opSBCAbsoluteX();
+        } else if (opcode == 0xF9) {
+            _opSBCAbsoluteY();
+        } else if (opcode == 0xE1) {
+            _opSBCIndexedIndirect();
+        } else if (opcode == 0xF1) {
+            _opSBCIndirectIndexed();
+        } else if (opcode == 0x29) {
+            _opANDImmediate();
+        } else if (opcode == 0x25) {
+            _opANDZeroPage();
+        } else if (opcode == 0x35) {
+            _opANDZeroPageX();
+        } else if (opcode == 0x2D) {
+            _opANDAbsolute();
+        } else if (opcode == 0x3D) {
+            _opANDAbsoluteX();
+        } else if (opcode == 0x39) {
+            _opANDAbsoluteY();
+        } else if (opcode == 0x21) {
+            _opANDIndexedIndirect();
+        } else if (opcode == 0x31) {
+            _opANDIndirectIndexed();
+        } else if (opcode == 0x09) {
+            _opORAImmediate();
+        } else if (opcode == 0x05) {
+            _opORAZeroPage();
+        } else if (opcode == 0x15) {
+            _opORAZeroPageX();
+        } else if (opcode == 0x0D) {
+            _opORAAbsolute();
+        } else if (opcode == 0x1D) {
+            _opORAAbsoluteX();
+        } else if (opcode == 0x19) {
+            _opORAAbsoluteY();
+        } else if (opcode == 0x01) {
+            _opORAIndexedIndirect();
+        } else if (opcode == 0x11) {
+            _opORAIndirectIndexed();
+        } else if (opcode == 0x49) {
+            _opEORImmediate();
+        } else if (opcode == 0x45) {
+            _opEORZeroPage();
+        } else if (opcode == 0x55) {
+            _opEORZeroPageX();
+        } else if (opcode == 0x4D) {
+            _opEORAbsolute();
+        } else if (opcode == 0x5D) {
+            _opEORAbsoluteX();
+        } else if (opcode == 0x59) {
+            _opEORAbsoluteY();
+        } else if (opcode == 0x41) {
+            _opEORIndexedIndirect();
+        } else if (opcode == 0x51) {
+            _opEORIndirectIndexed();
+        } else if (opcode == 0x24) {
+            _opBITZeroPage();
+        } else if (opcode == 0x2C) {
+            _opBITAbsolute();
+        } else if (opcode == 0x08) {
+            _opPHP();
+        } else if (opcode == 0x28) {
+            _opPLP();
+        } else if (opcode == 0x48) {
+            _opPHA();
+        } else if (opcode == 0x68) {
+            _opPLA();
+        } else if (opcode == 0x9A) {
+            _opTXS();
+        } else if (opcode == 0xBA) {
+            _opTSX();
+        } else if (opcode == 0xC9) {
+            _opCMPImmediate();
+        } else if (opcode == 0xC5) {
+            _opCMPZeroPage();
+        } else if (opcode == 0xD5) {
+            _opCMPZeroPageX();
+        } else if (opcode == 0xCD) {
+            _opCMPAbsolute();
+        } else if (opcode == 0xDD) {
+            _opCMPAbsoluteX();
+        } else if (opcode == 0xD9) {
+            _opCMPAbsoluteY();
+        } else if (opcode == 0xC1) {
+            _opCMPIndexedIndirect();
+        } else if (opcode == 0xD1) {
+            _opCMPIndirectIndexed();
+        } else if (opcode == 0xE0) {
+            _opCPXImmediate();
+        } else if (opcode == 0xE4) {
+            _opCPXZeroPage();
+        } else if (opcode == 0xEC) {
+            _opCPXAbsolute();
+        } else if (opcode == 0xC0) {
+            _opCPYImmediate();
+        } else if (opcode == 0xC4) {
+            _opCPYZeroPage();
+        } else if (opcode == 0xCC) {
+            _opCPYAbsolute();
+        } else if (opcode == 0x06) { _opASLZeroPage(); }
+        else if (opcode == 0x16) { _opASLZeroPageX(); }
+        else if (opcode == 0x0E) { _opASLAbsolute(); }
+        else if (opcode == 0x1E) { _opASLAbsoluteX(); }
+        else if (opcode == 0x0A) { _opASLAccumulator(); }
+        else if (opcode == 0x46) { _opLSRZeroPage(); }
+        else if (opcode == 0x56) { _opLSRZeroPageX(); }
+        else if (opcode == 0x4E) { _opLSRAbsolute(); }
+        else if (opcode == 0x5E) { _opLSRAbsoluteX(); }
+        else if (opcode == 0x4A) { _opLSRAccumulator(); }
+        else if (opcode == 0x26) { _opROLZeroPage(); }
+        else if (opcode == 0x36) { _opROLZeroPageX(); }
+        else if (opcode == 0x2E) { _opROLAbsolute(); }
+        else if (opcode == 0x3E) { _opROLAbsoluteX(); }
+        else if (opcode == 0x2A) { _opROLAccumulator(); }
+        else if (opcode == 0x66) { _opRORZeroPage(); }
+        else if (opcode == 0x76) { _opRORZeroPageX(); }
+        else if (opcode == 0x6E) { _opRORAbsolute(); }
+        else if (opcode == 0x7E) { _opRORAbsoluteX(); }
+        else if (opcode == 0x6A) { _opRORAccumulator(); }
+        else if (opcode == 0x20) { _opJSR(); }
+        else if (opcode == 0x60) { _opRTS(); }
+        else if (opcode == 0x90) { _opBCC(); }
+        else if (opcode == 0xB0) { _opBCS(); }
+        else if (opcode == 0xF0) { _opBEQ(); }
+        else if (opcode == 0x30) { _opBMI(); }
+        else if (opcode == 0xD0) { _opBNE(); }
+        else if (opcode == 0x10) { _opBPL(); }
+        else if (opcode == 0x50) { _opBVC(); }
+        else if (opcode == 0x70) { _opBVS(); }
+        else if (opcode == 0x00) { _opBRK(); }
+        else if (opcode == 0x40) { _opRTI(); }
+        else {
+            revert("OpcodeNotImplemented");
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                  STACK OPS
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _push8(uint8 value) internal {
+        _write8(0x0100 | uint16(cpu.SP), value);
+        unchecked { cpu.SP -= 1; }
+    }
+
+    function _pop8() internal returns (uint8 value) {
+        unchecked { cpu.SP += 1; }
+        value = _read8(0x0100 | uint16(cpu.SP));
+    }
+
+    function _push16(uint16 value) internal {
+        _push8(uint8(value >> 8));
+        _push8(uint8(value));
+    }
+
+    function _pop16() internal returns (uint16 value) {
+        uint8 lo = _pop8();
+        uint8 hi = _pop8();
+        value = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    // --- Stack related opcodes ---
+    function _opPHA() internal { _push8(cpu.A); }
+    function _opPLA() internal { cpu.A = _pop8(); _updateZN(cpu.A); }
+    function _opPHP() internal { _push8(cpu.P | 0x10); } // B flag set when pushed
+    function _opPLP() internal { cpu.P = (_pop8() & 0xEF) | 0x20; }
+    function _opTXS() internal { cpu.SP = cpu.X; }
+    function _opTSX() internal { cpu.X = cpu.SP; _updateZN(cpu.X); }
+
+    // --- Branch helper ---
+    function _branch(bool condition) internal {
+        int8 offset = int8(uint8(_fetch8()));
+        uint16 pc = cpu.PC;
+        uint16 target = uint16(uint32(int32(uint32(pc)) + int32(offset)) & 0xFFFF);
+        if (condition) {
+            cpu.PC = target;
+        }
+    }
+
+    // Branch opcodes
+    function _opBCC() internal { _branch(!_getFlag(FLAG_CARRY)); }
+    function _opBCS() internal { _branch(_getFlag(FLAG_CARRY)); }
+    function _opBEQ() internal { _branch(_getFlag(FLAG_ZERO)); }
+    function _opBMI() internal { _branch(_getFlag(FLAG_NEGATIVE)); }
+    function _opBNE() internal { _branch(!_getFlag(FLAG_ZERO)); }
+    function _opBPL() internal { _branch(!_getFlag(FLAG_NEGATIVE)); }
+    function _opBVC() internal { _branch(!_getFlag(FLAG_OVERFLOW)); }
+    function _opBVS() internal { _branch(_getFlag(FLAG_OVERFLOW)); }
+
+    // JSR / RTS
+    function _opJSR() internal {
+        uint16 addr = _fetch16();
+        // push (PC-1) high then low (PC already points to next after operand)
+        uint16 returnAddr = cpu.PC - 1;
+        _push16(returnAddr);
+        cpu.PC = addr;
+    }
+
+    function _opRTS() internal {
+        uint16 addr = _pop16();
+        cpu.PC = addr + 1;
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                  INTERRUPT HELPER
+    //////////////////////////////////////////////////////////////////////////*/
+
+    function _serviceInterrupt(uint16 vectorAddr, bool setBreakFlag) internal {
+        // Push current PC onto the stack (high byte first, then low byte)
+        uint16 pc = cpu.PC;
+        _push8(uint8(pc >> 8));
+        _push8(uint8(pc & 0xFF));
+
+        // Prepare processor status byte to push
+        uint8 status = cpu.P;
+        // Bit 5 is always set when pushed to the stack
+        status |= uint8(1 << FLAG_UNUSED);
+
+        // Set or clear the Break flag (bit 4) according to the interrupt source
+        if (setBreakFlag) {
+            status |= uint8(1 << FLAG_BREAK);
+        } else {
+            status &= ~uint8(1 << FLAG_BREAK);
+        }
+
+        _push8(status);
+
+        // Set Interrupt Disable flag to prevent nested IRQs
+        _setFlag(FLAG_INTERRUPT, true);
+
+        // Load new PC from the interrupt vector
+        uint8 lo = _read8(vectorAddr);
+        uint8 hi = _read8(vectorAddr + 1);
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    // --- Interrupt opcodes ---
+    function _opBRK() internal {
+        // BRK is a 2‑byte instruction; consume the padding byte
+        _fetch8();
+        // Service interrupt using the IRQ/BRK vector with Break flag set
+        _serviceInterrupt(VECTOR_IRQ, true);
+    }
+
+    // --- Interrupt return opcode ---
+    function _opRTI() internal {
+        // Pull status byte and restore, ensuring unused bit 5 stays set and B cleared
+        uint8 status = _pop8();
+        cpu.P = (status & 0xEF) | 0x20;
+
+        // Pull PC low then high bytes
+        uint8 lo = _pop8();
+        uint8 hi = _pop8();
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    /// @dev Check and service IRQ if appropriate
+    function _handleInterrupts() internal {
+        // NMI has higher priority and is not maskable
+        if (nmiPending) {
+            nmiPending = false;
+            _serviceInterrupt(VECTOR_NMI, false);
+        } else if (irqPending && !_getFlag(FLAG_INTERRUPT)) {
+            irqPending = false; // clear pending
+            _serviceInterrupt(VECTOR_IRQ, false);
+        }
     }
 }
 

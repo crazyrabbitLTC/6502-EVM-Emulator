@@ -62,6 +62,11 @@ contract Emulator6502 {
     //////////////////////////////////////////////////////////////////////////*/
 
     event CharOut(uint8 ascii);
+    /// @notice Emitted when `run()` halts because a BRK was executed or the step budget expired
+    event ProgramHalted(uint64 stepsExecuted);
+
+    // Indicates the CPU has encountered a BRK instruction and execution should stop
+    bool public halted;
 
     /*//////////////////////////////////////////////////////////////////////////
                                    CONSTRUCTOR
@@ -77,12 +82,14 @@ contract Emulator6502 {
     //////////////////////////////////////////////////////////////////////////*/
 
     /// @notice Executes one 6502 instruction and services pending IRQs
-    function step() external {
+    function step() public {
         // Service IRQ if pending and interrupts are enabled
         _handleInterrupts();
 
         uint8 opcode = _fetch8();
         _legacyDispatch(opcode);
+
+        lastOpcode = opcode;
     }
 
     /// @notice Assert the IRQ line (level sensitive). Will be handled on next step if I flag is clear.
@@ -99,6 +106,35 @@ contract Emulator6502 {
     function sendKeys(bytes calldata ascii) external {
         require(ascii.length > 0, "empty");
         keyBuffer = bytes.concat(keyBuffer, ascii);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                   BOOT & RUN LOOP
+    //////////////////////////////////////////////////////////////////////////*/
+
+    /// @notice Reset CPU state to the power‑on values and clear runtime flags/buffers.
+    /// Should be called after the ROM has been loaded but before `run()`.
+    function boot() external {
+        _powerOnReset();
+        keyPos = 0;
+        halted = false;
+    }
+
+    /// @notice Execute up to `maxSteps` instructions or until a BRK halts execution.
+    /// @dev This is a very naïve loop and will consume gas roughly proportional to
+    ///      `maxSteps`.  Callers should supply a sensible upper bound to avoid
+    ///      hitting the block gas limit.
+    /// @param maxSteps Maximum number of instructions to execute in this call.
+    function run(uint64 maxSteps) external {
+        require(maxSteps > 0, "zero budget");
+        uint64 executed;
+        while (executed < maxSteps && !halted) {
+            step();
+            unchecked { executed += 1; }
+        }
+
+        // Emit a signal so tests/front‑ends can observe loop exit conditions
+        emit ProgramHalted(executed);
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -811,6 +847,42 @@ contract Emulator6502 {
             _opCPYZeroPage();
         } else if (opcode == 0xCC) {
             _opCPYAbsolute();
+        } else if (opcode == 0xA0) {
+            _opLDYImmediate();
+        } else if (opcode == 0xA4) {
+            _opLDYZeroPage();
+        } else if (opcode == 0xB4) {
+            _opLDYZeroPageX();
+        } else if (opcode == 0xAC) {
+            _opLDYAbsolute();
+        } else if (opcode == 0xBC) {
+            _opLDYAbsoluteX();
+        } else if (opcode == 0xA2) {
+            _opLDXImmediate();
+        } else if (opcode == 0xA6) {
+            _opLDXZeroPage();
+        } else if (opcode == 0xB6) {
+            _opLDXZeroPageY();
+        } else if (opcode == 0xAE) {
+            _opLDXAbsolute();
+        } else if (opcode == 0xBE) {
+            _opLDXAbsoluteY();
+        } else if (opcode == 0xE8) {
+            _opINX();
+        } else if (opcode == 0xC8) {
+            _opINY();
+        } else if (opcode == 0xCA) {
+            _opDEX();
+        } else if (opcode == 0x88) {
+            _opDEY();
+        } else if (opcode == 0x18) {
+            _opCLC();
+        } else if (opcode == 0x38) {
+            _opSEC();
+        } else if (opcode == 0x58) {
+            _opCLI();
+        } else if (opcode == 0x78) {
+            _opSEI();
         } else if (opcode == 0x06) { _opASLZeroPage(); }
         else if (opcode == 0x16) { _opASLZeroPageX(); }
         else if (opcode == 0x0E) { _opASLAbsolute(); }
@@ -843,6 +915,20 @@ contract Emulator6502 {
         else if (opcode == 0x70) { _opBVS(); }
         else if (opcode == 0x00) { _opBRK(); }
         else if (opcode == 0x40) { _opRTI(); }
+        else if (opcode == 0x85) { _opSTAZeroPage(); }
+        else if (opcode == 0x95) { _opSTAZeroPageX(); }
+        else if (opcode == 0x8D) { _opSTAAbsolute(); }
+        else if (opcode == 0x9D) { _opSTAAbsoluteX(); }
+        else if (opcode == 0x99) { _opSTAAbsoluteY(); }
+        else if (opcode == 0x81) { _opSTAIndexedIndirect(); }
+        else if (opcode == 0x91) { _opSTAIndirectIndexed(); }
+        else if (opcode == 0x86) { _opSTXZeroPage(); }
+        else if (opcode == 0x96) { _opSTXZeroPageY(); }
+        else if (opcode == 0x8E) { _opSTXAbsolute(); }
+        else if (opcode == 0x84) { _opSTYZeroPage(); }
+        else if (opcode == 0x94) { _opSTYZeroPageX(); }
+        else if (opcode == 0x8C) { _opSTYAbsolute(); }
+        else if (opcode == 0x4C) { _opJMPAbsolute(); }
         else {
             revert("OpcodeNotImplemented");
         }
@@ -954,6 +1040,9 @@ contract Emulator6502 {
         _fetch8();
         // Service interrupt using the IRQ/BRK vector with Break flag set
         _serviceInterrupt(VECTOR_IRQ, true);
+
+        // Mark CPU as halted so outer loops know to stop execution.
+        halted = true;
     }
 
     // --- Interrupt return opcode ---
@@ -1009,4 +1098,99 @@ contract Emulator6502 {
 
         romLoaded = true;
     }
+
+    // --- STX helper ---
+    function _stx(uint16 addr) internal { _write8(addr, cpu.X); }
+    function _opSTXZeroPage() internal { _stx(uint16(_fetch8())); }
+    function _opSTXZeroPageY() internal { uint8 b=_fetch8(); unchecked{b+=cpu.Y;} _stx(uint16(b)); }
+    function _opSTXAbsolute() internal { _stx(_fetch16()); }
+
+    // --- STY helper ---
+    function _sty(uint16 addr) internal { _write8(addr, cpu.Y); }
+    function _opSTYZeroPage() internal { _sty(uint16(_fetch8())); }
+    function _opSTYZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _sty(uint16(b)); }
+    function _opSTYAbsolute() internal { _sty(_fetch16()); }
+
+    // --- STA helper ---
+    function _sta(uint16 addr) internal { _write8(addr, cpu.A); }
+    function _opSTAZeroPage() internal { _sta(uint16(_fetch8())); }
+    function _opSTAZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _sta(uint16(b)); }
+    function _opSTAAbsolute() internal { _sta(_fetch16()); }
+    function _opSTAAbsoluteX() internal { uint16 base=_fetch16(); _sta(base+cpu.X); }
+    function _opSTAAbsoluteY() internal { uint16 base=_fetch16(); _sta(base+cpu.Y); }
+    function _opSTAIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 addr=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _sta(addr);} 
+    function _opSTAIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _sta(base+cpu.Y);} 
+
+    // --- JMP helper ---
+    function _opJMPAbsolute() internal { uint16 addr=_fetch16(); cpu.PC = addr; }
+
+    /*//////////////////////////////////////////////////////////////////////////
+                                MISSING CORE OPCODES
+    //////////////////////////////////////////////////////////////////////////*/
+
+    // --- Flag / NOP opcodes ---
+    function _opCLC() internal { _setFlag(FLAG_CARRY, false); }
+    function _opSEC() internal { _setFlag(FLAG_CARRY, true); }
+    function _opCLI() internal { _setFlag(FLAG_INTERRUPT, false); }
+    function _opSEI() internal { _setFlag(FLAG_INTERRUPT, true); }
+    function _opCLV() internal { _setFlag(FLAG_OVERFLOW, false); }
+    function _opCLD() internal { _setFlag(FLAG_DECIMAL, false); }
+    function _opSED() internal { _setFlag(FLAG_DECIMAL, true); }
+    function _opNOP() internal { /* nothing */ }
+
+    // --- Register transfers ---
+    function _opTAX() internal { cpu.X = cpu.A; _updateZN(cpu.X); }
+    function _opTAY() internal { cpu.Y = cpu.A; _updateZN(cpu.Y); }
+    function _opTXA() internal { cpu.A = cpu.X; _updateZN(cpu.A); }
+    function _opTYA() internal { cpu.A = cpu.Y; _updateZN(cpu.A); }
+
+    // --- Increment / Decrement register ---
+    function _opINX() internal { unchecked { cpu.X += 1; } _updateZN(cpu.X); }
+    function _opINY() internal { unchecked { cpu.Y += 1; } _updateZN(cpu.Y); }
+    function _opDEX() internal { unchecked { cpu.X -= 1; } _updateZN(cpu.X); }
+    function _opDEY() internal { unchecked { cpu.Y -= 1; } _updateZN(cpu.Y); }
+
+    // --- INC / DEC memory helpers ---
+    function _incMem(uint16 addr) internal { uint8 v=_read8(addr, false); unchecked{v+=1;} _write8(addr, v); _updateZN(v); }
+    function _decMem(uint16 addr) internal { uint8 v=_read8(addr, false); unchecked{v-=1;} _write8(addr, v); _updateZN(v); }
+
+    function _opINCZeroPage() internal { _incMem(uint16(_fetch8())); }
+    function _opINCZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _incMem(uint16(b)); }
+    function _opINCAbsolute() internal { _incMem(_fetch16()); }
+    function _opINCAbsoluteX() internal { uint16 base=_fetch16(); _incMem(base+cpu.X); }
+
+    function _opDECZeroPage() internal { _decMem(uint16(_fetch8())); }
+    function _opDECZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _decMem(uint16(b)); }
+    function _opDECAbsolute() internal { _decMem(_fetch16()); }
+    function _opDECAbsoluteX() internal { uint16 base=_fetch16(); _decMem(base+cpu.X); }
+
+    // --- LDX / LDY ---
+    function _ldx(uint8 v) internal { cpu.X = v; _updateZN(v); }
+    function _ldy(uint8 v) internal { cpu.Y = v; _updateZN(v); }
+
+    // LDX addressing modes
+    function _opLDXImmediate() internal { _ldx(_fetch8()); }
+    function _opLDXZeroPage() internal { _ldx(_read8(uint16(_fetch8()), false)); }
+    function _opLDXZeroPageY() internal { uint8 b=_fetch8(); unchecked{b+=cpu.Y;} _ldx(_read8(uint16(b), false)); }
+    function _opLDXAbsolute() internal { _ldx(_read8(_fetch16(), false)); }
+    function _opLDXAbsoluteY() internal { uint16 base=_fetch16(); _ldx(_read8(base+cpu.Y, false)); }
+
+    // LDY addressing modes
+    function _opLDYImmediate() internal { _ldy(_fetch8()); }
+    function _opLDYZeroPage() internal { _ldy(_read8(uint16(_fetch8()), false)); }
+    function _opLDYZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _ldy(_read8(uint16(b), false)); }
+    function _opLDYAbsolute() internal { _ldy(_read8(_fetch16(), false)); }
+    function _opLDYAbsoluteX() internal { uint16 base=_fetch16(); _ldy(_read8(base+cpu.X, false)); }
+
+    // --- JMP (indirect) ---
+    function _opJMPIndirect() internal {
+        uint16 ptr = _fetch16();
+        uint16 loAddr = ptr;
+        uint16 hiAddr = (ptr & 0xFF00) | uint16(uint8(ptr + 1));
+        uint8 lo = _read8(loAddr);
+        uint8 hi = _read8(hiAddr);
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    uint8 public lastOpcode;
 } 
