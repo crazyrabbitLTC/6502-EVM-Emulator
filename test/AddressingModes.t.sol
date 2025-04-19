@@ -40,4 +40,49 @@ contract AddressingModesTest is Test {
         assertEq(addr, 0x210F);
         assertTrue(crossed);
     }
+
+    function test_ZeroPageYWrap() public {
+        emu.testSetPC(0xB000);
+        emu.testSetY(0x0d);
+        emu.poke8(0xB000, 0xF6); // base 0xF6
+        uint16 addr = emu.addrZeroPageY();
+        // 0xF6 + 0x0d = 0x03 with wrap
+        assertEq(addr, 0x0003);
+    }
+
+    function test_RelativeForward() public {
+        emu.testSetPC(0xB100);
+        emu.poke8(0xB100, 0x05); // +5
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xB106); // PC after fetch 0xB101 +5 =0xB106
+        assertFalse(crossed);
+    }
+
+    function test_RelativeBackwardNoPageCross() public {
+        emu.testSetPC(0xB1F0);
+        emu.poke8(0xB1F0, 0xF0); // -16 (0xF0 signed)
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xB1F1 - 0x10); // 0xB1F1 (after fetch) -16 = 0xB1E1
+        assertFalse(crossed);
+    }
+
+    function test_RelativeBackwardPageCross() public {
+        emu.testSetPC(0xC000);
+        emu.poke8(0xC000, 0x80); // -128 (0x80 signed)
+        (uint16 target, bool crossed) = emu.addrRelative();
+        assertEq(target, 0xBF81); // 0xC001 - 128 = 0xBF81
+        assertTrue(crossed);
+    }
+
+    function test_IndirectPageBug() public {
+        // Pointer = 0x12FF (low FF, high 12)
+        emu.testSetPC(0xD000);
+        emu.poke8(0xD000, 0xFF); // low byte ptr
+        emu.poke8(0xD001, 0x12); // high byte ptr
+        // Write target low/high obeying wrap bug
+        emu.poke8(0x12FF, 0x34); // low target byte
+        emu.poke8(0x1200, 0x12); // high target byte (wrap within page)
+        uint16 addr = emu.addrIndirect();
+        assertEq(addr, 0x1234);
+    }
 } 

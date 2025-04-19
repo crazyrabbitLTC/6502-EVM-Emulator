@@ -98,6 +98,18 @@ Tests
 • `test/StackOps.t.sol` – push/pop round‑trips, RTS returning to correct `PC+1`.  
 • Branch tests that cover page‑cross penalties.
 
+Sub‑phases (incremental PR plan)  
+• 5.0 Stack byte helpers – implement `_push8`, `_pop8`; unit test push/pop round‑trip.  
+• 5.1 16‑bit helpers – `_push16`, `_pop16`; test 16‑bit round‑trip.  
+• 5.2 Accumulator stack ops – opcodes PHA (0x48), PLA (0x68) with flag updates and tests.  
+• 5.3 Processor status ops – PHP (0x08), PLP (0x28). Ensure B and unused bits handling; tests.  
+• 5.4 Stack‑pointer transfer – TXS (0x9A) and TSX (0xBA); tests for Z/N flags.  
+• 5.5 Sub‑routine flow – JSR (0x20) and RTS (0x60); tests that verify return address.  
+• 5.6 Relative branch helper – finalize `addrRelative` and `_branch` function.  
+• 5.7 Branch opcodes – implement BPL, BMI, BVC, BVS, BCC, BCS, BEQ, BNE with tests for taken/untaken and page‑crossing.
+
+Each sub‑phase should compile and pass its new tests before proceeding to the next.
+
 ------------------------------------------------
 PHASE 6 – Interrupt Controller
 ------------------------------------------------
