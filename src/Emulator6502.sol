@@ -25,6 +25,7 @@ contract Emulator6502 {
 
     // Pending interrupt lines
     bool private irqPending;
+    bool private nmiPending;
 
     /*//////////////////////////////////////////////////////////////////////////
                                    FLAGS
@@ -52,8 +53,8 @@ contract Emulator6502 {
     //////////////////////////////////////////////////////////////////////////*/
 
     constructor() {
-        _powerOnReset();
         _initMemory();
+        _powerOnReset();
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -74,6 +75,11 @@ contract Emulator6502 {
         irqPending = true;
     }
 
+    /// @notice Trigger a Non‑Maskable Interrupt (edge‑trigger). Always serviced on next step regardless of I flag.
+    function triggerNMI() external {
+        nmiPending = true;
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                                    INTERNALS
     //////////////////////////////////////////////////////////////////////////*/
@@ -85,7 +91,16 @@ contract Emulator6502 {
         cpu.Y = 0;
         cpu.SP = 0xfd; // Stack pointer after reset (§5)
         cpu.P = uint8(1 << FLAG_INTERRUPT); // I flag set, others cleared
-        cpu.PC = 0; // Vector fetch not implemented yet
+
+        // Fetch reset vector (little‑endian) from memory
+        uint8 lo = _read8(VECTOR_RESET);
+        uint8 hi = _read8(VECTOR_RESET + 1);
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
+
+        // Clear pending interrupts
+        irqPending = false;
+        nmiPending = false;
+
         cpu.cycles = 0;
     }
 
@@ -906,7 +921,11 @@ contract Emulator6502 {
 
     /// @dev Check and service IRQ if appropriate
     function _handleInterrupts() internal {
-        if (irqPending && !_getFlag(FLAG_INTERRUPT)) {
+        // NMI has higher priority and is not maskable
+        if (nmiPending) {
+            nmiPending = false;
+            _serviceInterrupt(VECTOR_NMI, false);
+        } else if (irqPending && !_getFlag(FLAG_INTERRUPT)) {
             irqPending = false; // clear pending
             _serviceInterrupt(VECTOR_IRQ, false);
         }
