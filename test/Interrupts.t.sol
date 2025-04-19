@@ -93,4 +93,25 @@ contract InterruptsTest is Test {
         assertEq(pcAfter, 0x8000, "NMI RTI should return to original PC");
         assertEq(spAfter, 0xFD, "Stack pointer restore after NMI");
     }
+
+    function testIRQMasksWhenIFlagSet() public {
+        // Ensure I flag is set (default after reset), IRQ should be ignored
+        // Set IRQ vector
+        emu.poke8(0xFFFE, 0x00);
+        emu.poke8(0xFFFF, 0x90);
+
+        // Program at 0x8000: LDA #$01 (0xA9 0x01)
+        emu.poke8(0x8000, 0xA9);
+        emu.poke8(0x8001, 0x01);
+
+        // Trigger IRQ while I flag set
+        emu.triggerIRQ();
+
+        // Step executes LDA, IRQ should not be serviced
+        emu.step();
+
+        (, , , uint8 spAfter, uint16 pcAfter,,) = _cpu();
+        assertEq(pcAfter, 0x8002, "PC should advance normally when IRQ masked");
+        assertEq(spAfter, 0xFD, "Stack pointer unchanged when IRQ masked");
+    }
 } 
