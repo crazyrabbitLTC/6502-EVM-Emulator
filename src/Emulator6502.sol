@@ -23,6 +23,9 @@ contract Emulator6502 {
 
     CPU public cpu;
 
+    // Pending interrupt lines
+    bool private irqPending;
+
     /*//////////////////////////////////////////////////////////////////////////
                                    FLAGS
     //////////////////////////////////////////////////////////////////////////*/
@@ -57,10 +60,18 @@ contract Emulator6502 {
                                    PUBLIC API
     //////////////////////////////////////////////////////////////////////////*/
 
-    /// @notice Executes one instruction (currently only implements LDA #imm)
+    /// @notice Executes one 6502 instruction and services pending IRQs
     function step() external {
+        // Service IRQ if pending and interrupts are enabled
+        _handleInterrupts();
+
         uint8 opcode = _fetch8();
         _legacyDispatch(opcode);
+    }
+
+    /// @notice Assert the IRQ line (level sensitive). Will be handled on next step if I flag is clear.
+    function triggerIRQ() external {
+        irqPending = true;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -891,5 +902,13 @@ contract Emulator6502 {
         uint8 lo = _pop8();
         uint8 hi = _pop8();
         cpu.PC = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    /// @dev Check and service IRQ if appropriate
+    function _handleInterrupts() internal {
+        if (irqPending && !_getFlag(FLAG_INTERRUPT)) {
+            irqPending = false; // clear pending
+            _serviceInterrupt(VECTOR_IRQ, false);
+        }
     }
 } 
