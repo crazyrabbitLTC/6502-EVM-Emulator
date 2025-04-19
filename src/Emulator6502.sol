@@ -434,6 +434,11 @@ contract Emulator6502 {
         cpu.SP = newSP;
     }
 
+    // Read IO for testing (mutates key buffer)
+    function testReadIO(uint16 addr) external returns (uint8) {
+        return _read8(addr, true);
+    }
+
     /*//////////////////////////////////////////////////////////////////////////
                           FETCH & ADDRESSING HELPERS
     //////////////////////////////////////////////////////////////////////////*/
