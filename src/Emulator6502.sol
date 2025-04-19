@@ -766,6 +766,7 @@ contract Emulator6502 {
         else if (opcode == 0x10) { _opBPL(); }
         else if (opcode == 0x50) { _opBVC(); }
         else if (opcode == 0x70) { _opBVS(); }
+        else if (opcode == 0x00) { _opBRK(); }
         else {
             revert("OpcodeNotImplemented");
         }
@@ -869,5 +870,13 @@ contract Emulator6502 {
         uint8 lo = _read8(vectorAddr);
         uint8 hi = _read8(vectorAddr + 1);
         cpu.PC = uint16(lo) | (uint16(hi) << 8);
+    }
+
+    // --- Interrupt opcodes ---
+    function _opBRK() internal {
+        // BRK is a 2‑byte instruction; consume the padding byte
+        _fetch8();
+        // Service interrupt using the IRQ/BRK vector with Break flag set
+        _serviceInterrupt(VECTOR_IRQ, true);
     }
 } 
