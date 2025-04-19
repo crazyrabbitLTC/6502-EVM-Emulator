@@ -130,18 +130,32 @@ If you need cycle‑exact behaviour (for raster demos etc.), wire page‑cross f
 Test with known instruction traces.
 
 ------------------------------------------------
-PHASE 8 – BASIC ROM Integration
+PHASE 8 – BASIC ROM Integration (updated)
 ------------------------------------------------
-Scope  
-• Load an open‑source 6502 BASIC (e.g., Woz Mon or Microsoft BASIC) into memory.  
-• Provide a thin wrapper `syscall(uint16 addr)` to call into ROM routines for IO (e.g., print/keyboard).
+Scope
+•  Treat the BASIC ROM as a separate immutable "cartridge" contract (`BasicRom.sol`), whose bytecode is the raw ROM image.
+•  Extend the emulator with `loadRomFrom(address rom, uint16 baseAddr)` that uses `extcodecopy` to copy the cartridge bytes into RAM.
+•  Map simple UART‑style IO: `$F000` CPU read = keyboard buffer, `$F001` CPU write = emits `CharOut(uint8)`.
+•  Provide external `sendKeys(bytes ascii)` to queue keystrokes.
+•  Add `boot()` and gas‑capped `run(uint64 maxSteps)` execution loop.
 
-Deliverables  
-• Script `script/LoadRom.s.sol` that deploys emulator + writes ROM bytes.  
-• Public function `sendKey(uint8 ascii)` and event `CharOut(uint8)` to handle IO.
+Sub‑phases
+8.0  ROM contract + `loadRomFrom` helper & Foundry script to deploy + load.
+8.1  Memory‑mapped IO overrides in `_read8` / `_write8` and `CharOut` event.
+8.2  Keystroke ring‑buffer + `sendKeys` + `boot()` wiring.
+8.3  `run()` instruction loop with BRK/step‑budget halt.
+8.4  End‑to‑end test that loads TinyBASIC, types `PRINT 2+2` (newline) and asserts `CharOut` contains `"4"`.
 
-Tests  
-• End‑to‑end test that boots ROM, types `PRINT 2+2` keystrokes, runs, and captures `CharOut` events containing `4`.
+Assumptions
+•  TinyBASIC (~4–8 KiB) fits comfortably in contract bytecode and RAM.
+•  Exact cycle accuracy not required; functional correctness only.
+•  USART addresses chosen above may be tweaked to match ROM expectations.
+
+Deliverables
+•  `BasicRom.sol` (immutable library/contract).
+•  Updated `Emulator6502.sol` with ROM loading & IO hooks.
+•  Script `script/LoadRom.s.sol`.
+•  Tests `test/BasicIntegration.t.sol`.
 
 ------------------------------------------------
 PHASE 9 – High‑level BASIC Program Runner
