@@ -767,6 +767,7 @@ contract Emulator6502 {
         else if (opcode == 0x50) { _opBVC(); }
         else if (opcode == 0x70) { _opBVS(); }
         else if (opcode == 0x00) { _opBRK(); }
+        else if (opcode == 0x40) { _opRTI(); }
         else {
             revert("OpcodeNotImplemented");
         }
@@ -878,5 +879,17 @@ contract Emulator6502 {
         _fetch8();
         // Service interrupt using the IRQ/BRK vector with Break flag set
         _serviceInterrupt(VECTOR_IRQ, true);
+    }
+
+    // --- Interrupt return opcode ---
+    function _opRTI() internal {
+        // Pull status byte and restore, ensuring unused bit 5 stays set and B cleared
+        uint8 status = _pop8();
+        cpu.P = (status & 0xEF) | 0x20;
+
+        // Pull PC low then high bytes
+        uint8 lo = _pop8();
+        uint8 hi = _pop8();
+        cpu.PC = uint16(lo) | (uint16(hi) << 8);
     }
 } 
