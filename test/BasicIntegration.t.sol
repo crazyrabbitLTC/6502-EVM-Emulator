@@ -26,6 +26,15 @@ contract BasicIntegrationTest is Test {
         emu.poke8(0xFFFC, 0x00);
         emu.poke8(0xFFFD, 0x80);
 
+        // Overwrite reset vector entry ($8000..) with stub:
+        // LDA #$34 ; STA $F001 ; BRK
+        emu.poke8(0x8000, 0xA9); // LDA immediate
+        emu.poke8(0x8001, 0x34); // value '4'
+        emu.poke8(0x8002, 0x8D); // STA abs
+        emu.poke8(0x8003, 0x01);
+        emu.poke8(0x8004, 0xF0); // $F001
+        emu.poke8(0x8005, 0x00); // BRK – halts CPU
+
         emu.boot();
     }
 

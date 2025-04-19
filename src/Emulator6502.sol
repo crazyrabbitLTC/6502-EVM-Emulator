@@ -12,12 +12,12 @@ contract Emulator6502 {
     //////////////////////////////////////////////////////////////////////////*/
 
     struct CPU {
-        uint8 A;      // Accumulator
-        uint8 X;      // Index register X
-        uint8 Y;      // Index register Y
-        uint8 SP;     // Stack pointer ($0100 page offset)
-        uint16 PC;    // Program counter
-        uint8 P;      // Processor status flags
+        uint8 A; // Accumulator
+        uint8 X; // Index register X
+        uint8 Y; // Index register Y
+        uint8 SP; // Stack pointer ($0100 page offset)
+        uint16 PC; // Program counter
+        uint8 P; // Processor status flags
         uint64 cycles; // Cycle counter (optional)
     }
 
@@ -36,22 +36,22 @@ contract Emulator6502 {
                                    FLAGS
     //////////////////////////////////////////////////////////////////////////*/
 
-    uint8 private constant FLAG_NEGATIVE  = 7;
-    uint8 private constant FLAG_OVERFLOW  = 6;
-    uint8 private constant FLAG_UNUSED    = 5; // Always 1 on pushes, 0 otherwise (not enforced yet)
-    uint8 private constant FLAG_BREAK     = 4;
-    uint8 private constant FLAG_DECIMAL   = 3;
+    uint8 private constant FLAG_NEGATIVE = 7;
+    uint8 private constant FLAG_OVERFLOW = 6;
+    uint8 private constant FLAG_UNUSED = 5; // Always 1 on pushes, 0 otherwise (not enforced yet)
+    uint8 private constant FLAG_BREAK = 4;
+    uint8 private constant FLAG_DECIMAL = 3;
     uint8 private constant FLAG_INTERRUPT = 2;
-    uint8 private constant FLAG_ZERO      = 1;
-    uint8 private constant FLAG_CARRY     = 0;
+    uint8 private constant FLAG_ZERO = 1;
+    uint8 private constant FLAG_CARRY = 0;
 
     /*//////////////////////////////////////////////////////////////////////////
                                    INTERRUPT VECTORS
     //////////////////////////////////////////////////////////////////////////*/
 
-    uint16 private constant VECTOR_NMI   = 0xFFFA;
+    uint16 private constant VECTOR_NMI = 0xFFFA;
     uint16 private constant VECTOR_RESET = 0xFFFC;
-    uint16 private constant VECTOR_IRQ   = 0xFFFE;
+    uint16 private constant VECTOR_IRQ = 0xFFFE;
 
     // Memory‑mapped IO addresses
     uint16 private constant IO_KBD = 0xF000; // Keyboard input register (read)
@@ -130,7 +130,9 @@ contract Emulator6502 {
         uint64 executed;
         while (executed < maxSteps && !halted) {
             step();
-            unchecked { executed += 1; }
+            unchecked {
+                executed += 1;
+            }
         }
 
         // Emit a signal so tests/front‑ends can observe loop exit conditions
@@ -190,7 +192,9 @@ contract Emulator6502 {
 
     function _opADCZeroPageX() internal {
         uint8 base = _fetch8();
-        unchecked { base += cpu.X; }
+        unchecked {
+            base += cpu.X;
+        }
         _adc(_read8(uint16(base)));
     }
 
@@ -215,7 +219,7 @@ contract Emulator6502 {
         uint8 ptr = _fetch8();
         unchecked { ptr += cpu.X; }
         uint8 lo = _read8(uint16(ptr));
-        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint8 hi = _read8(uint16(_zpNext(ptr)));
         uint16 addr = uint16(lo) | (uint16(hi) << 8);
         _adc(_read8(addr));
     }
@@ -246,7 +250,9 @@ contract Emulator6502 {
 
     function _opSBCZeroPageX() internal {
         uint8 base = _fetch8();
-        unchecked { base += cpu.X; }
+        unchecked {
+            base += cpu.X;
+        }
         _sbc(_read8(uint16(base)));
     }
 
@@ -271,7 +277,7 @@ contract Emulator6502 {
         uint8 ptr = _fetch8();
         unchecked { ptr += cpu.X; }
         uint8 lo = _read8(uint16(ptr));
-        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint8 hi = _read8(uint16(_zpNext(ptr)));
         uint16 addr = uint16(lo) | (uint16(hi) << 8);
         _sbc(_read8(addr));
     }
@@ -303,7 +309,9 @@ contract Emulator6502 {
 
     function _opLDAZeroPageX() internal {
         uint8 base = _fetch8();
-        unchecked { base += cpu.X; }
+        unchecked {
+            base += cpu.X;
+        }
         _lda(_read8(uint16(base)));
     }
 
@@ -328,9 +336,10 @@ contract Emulator6502 {
         uint8 ptr = _fetch8();
         unchecked { ptr += cpu.X; }
         uint8 lo = _read8(uint16(ptr));
-        uint8 hi = _read8(uint16(uint8(ptr + 1)));
+        uint8 hi = _read8(uint16(_zpNext(ptr)));
         uint16 addr = uint16(lo) | (uint16(hi) << 8);
-        _lda(_read8(addr));
+        cpu.A = _read8(addr);
+        _updateZN(cpu.A);
     }
 
     function _opLDAIndirectIndexed() internal {
@@ -482,7 +491,9 @@ contract Emulator6502 {
     /// @dev Fetch next byte at PC and increment PC
     function _fetch8() internal returns (uint8 val) {
         val = _read8(cpu.PC, false);
-        unchecked { cpu.PC += 1; }
+        unchecked {
+            cpu.PC += 1;
+        }
     }
 
     /// @dev Fetch next two bytes little‑endian and increment PC by 2
@@ -506,7 +517,9 @@ contract Emulator6502 {
     /// @notice Zero‑page,X addressing
     function addrZeroPageX() external returns (uint16 addr) {
         uint8 base = _fetch8();
-        unchecked { base += cpu.X; }
+        unchecked {
+            base += cpu.X;
+        }
         addr = uint16(base);
     }
 
@@ -534,12 +547,17 @@ contract Emulator6502 {
         uint8 ptr = _fetch8();
         uint8 lo = _read8(uint16(ptr));
         uint8 hi;
-        unchecked { hi = _read8(uint16(uint8(ptr + 1))); }
+        unchecked {
+            hi = _read8(uint16(uint8(ptr + 1)));
+        }
         addr = uint16(lo) | (uint16(hi) << 8);
     }
 
     /// @notice Indirect Indexed (zp),Y
-    function addrIndirectIndexed() external returns (uint16 addr, bool pageCrossed) {
+    function addrIndirectIndexed()
+        external
+        returns (uint16 addr, bool pageCrossed)
+    {
         uint8 ptr = _fetch8();
         uint8 lo = _read8(uint16(ptr));
         uint8 hi = _read8(uint16(uint8(ptr + 1)));
@@ -551,7 +569,9 @@ contract Emulator6502 {
     /// @notice Zero‑page,Y addressing
     function addrZeroPageY() external returns (uint16 addr) {
         uint8 base = _fetch8();
-        unchecked { base += cpu.Y; }
+        unchecked {
+            base += cpu.Y;
+        }
         addr = uint16(base);
     }
 
@@ -582,73 +602,223 @@ contract Emulator6502 {
         _updateZN(res);
     }
 
-    function _opANDImmediate() internal { _and(_fetch8()); }
-    function _opANDZeroPage() internal { _and(_read8(uint16(_fetch8()), false)); }
-    function _opANDZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _and(_read8(uint16(b), false)); }
-    function _opANDAbsolute() internal { _and(_read8(_fetch16(), false)); }
-    function _opANDAbsoluteX() internal { uint16 base=_fetch16(); _and(_read8(base+cpu.X, false)); }
-    function _opANDAbsoluteY() internal { uint16 base=_fetch16(); _and(_read8(base+cpu.Y, false)); }
-    function _opANDIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 addr=uint16(_read8(uint16(p), false))| (uint16(_read8(uint16(uint8(p+1)), false))<<8); _and(_read8(addr, false)); }
-    function _opANDIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _and(_read8(base+cpu.Y, false)); }
+    function _opANDImmediate() internal {
+        _and(_fetch8());
+    }
+    function _opANDZeroPage() internal {
+        _and(_read8(uint16(_fetch8()), false));
+    }
+    function _opANDZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _and(_read8(uint16(b), false));
+    }
+    function _opANDAbsolute() internal {
+        _and(_read8(_fetch16(), false));
+    }
+    function _opANDAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _and(_read8(base + cpu.X, false));
+    }
+    function _opANDAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _and(_read8(base + cpu.Y, false));
+    }
+    function _opANDIndexedIndirect() internal {
+        uint8 p = _fetch8();
+        unchecked {
+            p += cpu.X;
+        }
+        uint16 addr = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(_zpNext(p)), false)) << 8);
+        _and(_read8(addr, false));
+    }
+    function _opANDIndirectIndexed() internal {
+        uint8 p = _fetch8();
+        uint16 base = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(uint8(p + 1)), false)) << 8);
+        _and(_read8(base + cpu.Y, false));
+    }
 
     // --- ORA helpers ---
-    function _ora(uint8 value) internal { uint8 res = cpu.A | value; cpu.A = res; _updateZN(res);}    
-    function _opORAImmediate() internal { _ora(_fetch8()); }
-    function _opORAZeroPage() internal { _ora(_read8(uint16(_fetch8()), false)); }
-    function _opORAZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _ora(_read8(uint16(b), false)); }
-    function _opORAAbsolute() internal { _ora(_read8(_fetch16(), false)); }
-    function _opORAAbsoluteX() internal { uint16 base=_fetch16(); _ora(_read8(base+cpu.X, false)); }
-    function _opORAAbsoluteY() internal { uint16 base=_fetch16(); _ora(_read8(base+cpu.Y, false)); }
-    function _opORAIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _ora(_read8(a, false)); }
-    function _opORAIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _ora(_read8(base+cpu.Y, false)); }
+    function _ora(uint8 value) internal {
+        uint8 res = cpu.A | value;
+        cpu.A = res;
+        _updateZN(res);
+    }
+    function _opORAImmediate() internal {
+        _ora(_fetch8());
+    }
+    function _opORAZeroPage() internal {
+        _ora(_read8(uint16(_fetch8()), false));
+    }
+    function _opORAZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _ora(_read8(uint16(b), false));
+    }
+    function _opORAAbsolute() internal {
+        _ora(_read8(_fetch16(), false));
+    }
+    function _opORAAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _ora(_read8(base + cpu.X, false));
+    }
+    function _opORAAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _ora(_read8(base + cpu.Y, false));
+    }
+    function _opORAIndexedIndirect() internal {
+        uint8 p = _fetch8();
+        unchecked {
+            p += cpu.X;
+        }
+        uint16 a = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(_zpNext(p)), false)) << 8);
+        _ora(_read8(a, false));
+    }
+    function _opORAIndirectIndexed() internal {
+        uint8 p = _fetch8();
+        uint16 base = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(uint8(p + 1)), false)) << 8);
+        _ora(_read8(base + cpu.Y, false));
+    }
 
     // --- EOR helpers ---
-    function _eor(uint8 value) internal { uint8 res = cpu.A ^ value; cpu.A = res; _updateZN(res);}    
-    function _opEORImmediate() internal { _eor(_fetch8()); }
-    function _opEORZeroPage() internal { _eor(_read8(uint16(_fetch8()), false)); }
-    function _opEORZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _eor(_read8(uint16(b), false)); }
-    function _opEORAbsolute() internal { _eor(_read8(_fetch16(), false)); }
-    function _opEORAbsoluteX() internal { uint16 base=_fetch16(); _eor(_read8(base+cpu.X, false)); }
-    function _opEORAbsoluteY() internal { uint16 base=_fetch16(); _eor(_read8(base+cpu.Y, false)); }
-    function _opEORIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _eor(_read8(a, false)); }
-    function _opEORIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _eor(_read8(base+cpu.Y, false)); }
+    function _eor(uint8 value) internal {
+        uint8 res = cpu.A ^ value;
+        cpu.A = res;
+        _updateZN(res);
+    }
+    function _opEORImmediate() internal {
+        _eor(_fetch8());
+    }
+    function _opEORZeroPage() internal {
+        _eor(_read8(uint16(_fetch8()), false));
+    }
+    function _opEORZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _eor(_read8(uint16(b), false));
+    }
+    function _opEORAbsolute() internal {
+        _eor(_read8(_fetch16(), false));
+    }
+    function _opEORAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _eor(_read8(base + cpu.X, false));
+    }
+    function _opEORAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _eor(_read8(base + cpu.Y, false));
+    }
+    function _opEORIndexedIndirect() internal {
+        uint8 p = _fetch8();
+        unchecked {
+            p += cpu.X;
+        }
+        uint16 a = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(_zpNext(p)), false)) << 8);
+        _eor(_read8(a, false));
+    }
+    function _opEORIndirectIndexed() internal {
+        uint8 p = _fetch8();
+        uint16 base = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(uint8(p + 1)), false)) << 8);
+        _eor(_read8(base + cpu.Y, false));
+    }
 
     // --- BIT helper --- (affects Z = A & val ==0, N,V from val bits 7/6)
     function _bit(uint8 val) internal {
         _setFlag(FLAG_ZERO, (cpu.A & val) == 0);
-        _setFlag(FLAG_NEGATIVE, (val & 0x80)!=0);
-        _setFlag(FLAG_OVERFLOW, (val & 0x40)!=0);
+        _setFlag(FLAG_NEGATIVE, (val & 0x80) != 0);
+        _setFlag(FLAG_OVERFLOW, (val & 0x40) != 0);
     }
-    function _opBITZeroPage() internal { _bit(_read8(uint16(_fetch8()), false)); }
-    function _opBITAbsolute() internal { _bit(_read8(_fetch16(), false)); }
+    function _opBITZeroPage() internal {
+        _bit(_read8(uint16(_fetch8()), false));
+    }
+    function _opBITAbsolute() internal {
+        _bit(_read8(_fetch16(), false));
+    }
 
     // --- Compare helpers ---
     function _cmp(uint8 reg, uint8 value) internal {
         uint8 diff;
-        unchecked { diff = reg - value; }
+        unchecked {
+            diff = reg - value;
+        }
         _setFlag(FLAG_CARRY, reg >= value);
         _updateZN(diff);
     }
 
     // CMP (with A)
-    function _opCMPImmediate() internal { _cmp(cpu.A, _fetch8()); }
-    function _opCMPZeroPage() internal { _cmp(cpu.A, _read8(uint16(_fetch8()), false)); }
-    function _opCMPZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _cmp(cpu.A, _read8(uint16(b), false)); }
-    function _opCMPAbsolute() internal { _cmp(cpu.A, _read8(_fetch16(), false)); }
-    function _opCMPAbsoluteX() internal { uint16 base=_fetch16(); _cmp(cpu.A, _read8(base+cpu.X, false)); }
-    function _opCMPAbsoluteY() internal { uint16 base=_fetch16(); _cmp(cpu.A, _read8(base+cpu.Y, false)); }
-    function _opCMPIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 a=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _cmp(cpu.A, _read8(a, false)); }
-    function _opCMPIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p), false))|(uint16(_read8(uint16(uint8(p+1)), false))<<8); _cmp(cpu.A, _read8(base+cpu.Y, false)); }
+    function _opCMPImmediate() internal {
+        _cmp(cpu.A, _fetch8());
+    }
+    function _opCMPZeroPage() internal {
+        _cmp(cpu.A, _read8(uint16(_fetch8()), false));
+    }
+    function _opCMPZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _cmp(cpu.A, _read8(uint16(b), false));
+    }
+    function _opCMPAbsolute() internal {
+        _cmp(cpu.A, _read8(_fetch16(), false));
+    }
+    function _opCMPAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _cmp(cpu.A, _read8(base + cpu.X, false));
+    }
+    function _opCMPAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _cmp(cpu.A, _read8(base + cpu.Y, false));
+    }
+    function _opCMPIndexedIndirect() internal {
+        uint8 p = _fetch8();
+        unchecked {
+            p += cpu.X;
+        }
+        uint16 a = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(_zpNext(p)), false)) << 8);
+        _cmp(cpu.A, _read8(a, false));
+    }
+    function _opCMPIndirectIndexed() internal {
+        uint8 p = _fetch8();
+        uint16 base = uint16(_read8(uint16(p), false)) |
+            (uint16(_read8(uint16(uint8(p + 1)), false)) << 8);
+        _cmp(cpu.A, _read8(base + cpu.Y, false));
+    }
 
     // CPX
-    function _opCPXImmediate() internal { _cmp(cpu.X, _fetch8()); }
-    function _opCPXZeroPage() internal { _cmp(cpu.X, _read8(uint16(_fetch8()), false)); }
-    function _opCPXAbsolute() internal { _cmp(cpu.X, _read8(_fetch16(), false)); }
+    function _opCPXImmediate() internal {
+        _cmp(cpu.X, _fetch8());
+    }
+    function _opCPXZeroPage() internal {
+        _cmp(cpu.X, _read8(uint16(_fetch8()), false));
+    }
+    function _opCPXAbsolute() internal {
+        _cmp(cpu.X, _read8(_fetch16(), false));
+    }
 
     // CPY
-    function _opCPYImmediate() internal { _cmp(cpu.Y, _fetch8()); }
-    function _opCPYZeroPage() internal { _cmp(cpu.Y, _read8(uint16(_fetch8()), false)); }
-    function _opCPYAbsolute() internal { _cmp(cpu.Y, _read8(_fetch16(), false)); }
+    function _opCPYImmediate() internal {
+        _cmp(cpu.Y, _fetch8());
+    }
+    function _opCPYZeroPage() internal {
+        _cmp(cpu.Y, _read8(uint16(_fetch8()), false));
+    }
+    function _opCPYAbsolute() internal {
+        _cmp(cpu.Y, _read8(_fetch16(), false));
+    }
 
     // --- Shift / Rotate helpers ---
     function _asl(uint8 value) internal returns (uint8 res) {
@@ -678,32 +848,140 @@ contract Emulator6502 {
     }
 
     // ASL
-    function _opASLAccumulator() internal { cpu.A = _asl(cpu.A); }
-    function _opASLZeroPage() internal { uint16 addr = uint16(_fetch8()); uint8 v=_read8(addr, false); uint8 r=_asl(v); _write8(addr,r); } 
-    function _opASLZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr, false); uint8 r=_asl(v); _write8(addr,r); } 
-    function _opASLAbsolute() internal { uint16 addr = _fetch16(); uint8 v=_read8(addr, false); uint8 r=_asl(v); _write8(addr,r); } 
-    function _opASLAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr, false); uint8 r=_asl(v); _write8(addr,r); } 
+    function _opASLAccumulator() internal {
+        cpu.A = _asl(cpu.A);
+    }
+    function _opASLZeroPage() internal {
+        uint16 addr = uint16(_fetch8());
+        uint8 v = _read8(addr, false);
+        uint8 r = _asl(v);
+        _write8(addr, r);
+    }
+    function _opASLZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        uint16 addr = uint16(b);
+        uint8 v = _read8(addr, false);
+        uint8 r = _asl(v);
+        _write8(addr, r);
+    }
+    function _opASLAbsolute() internal {
+        uint16 addr = _fetch16();
+        uint8 v = _read8(addr, false);
+        uint8 r = _asl(v);
+        _write8(addr, r);
+    }
+    function _opASLAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        uint8 v = _read8(addr, false);
+        uint8 r = _asl(v);
+        _write8(addr, r);
+    }
 
     // LSR
-    function _opLSRAccumulator() internal { cpu.A = _lsr(cpu.A); }
-    function _opLSRZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr, false); uint8 r=_lsr(v); _write8(addr,r); } 
-    function _opLSRZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr, false); uint8 r=_lsr(v); _write8(addr,r); } 
-    function _opLSRAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr, false); uint8 r=_lsr(v); _write8(addr,r); } 
-    function _opLSRAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr, false); uint8 r=_lsr(v); _write8(addr,r); } 
+    function _opLSRAccumulator() internal {
+        cpu.A = _lsr(cpu.A);
+    }
+    function _opLSRZeroPage() internal {
+        uint16 addr = uint16(_fetch8());
+        uint8 v = _read8(addr, false);
+        uint8 r = _lsr(v);
+        _write8(addr, r);
+    }
+    function _opLSRZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        uint16 addr = uint16(b);
+        uint8 v = _read8(addr, false);
+        uint8 r = _lsr(v);
+        _write8(addr, r);
+    }
+    function _opLSRAbsolute() internal {
+        uint16 addr = _fetch16();
+        uint8 v = _read8(addr, false);
+        uint8 r = _lsr(v);
+        _write8(addr, r);
+    }
+    function _opLSRAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        uint8 v = _read8(addr, false);
+        uint8 r = _lsr(v);
+        _write8(addr, r);
+    }
 
     // ROL
-    function _opROLAccumulator() internal { cpu.A = _rol(cpu.A); }
-    function _opROLZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr, false); uint8 r=_rol(v); _write8(addr,r); } 
-    function _opROLZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr, false); uint8 r=_rol(v); _write8(addr,r); } 
-    function _opROLAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr, false); uint8 r=_rol(v); _write8(addr,r); } 
-    function _opROLAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr, false); uint8 r=_rol(v); _write8(addr,r); } 
+    function _opROLAccumulator() internal {
+        cpu.A = _rol(cpu.A);
+    }
+    function _opROLZeroPage() internal {
+        uint16 addr = uint16(_fetch8());
+        uint8 v = _read8(addr, false);
+        uint8 r = _rol(v);
+        _write8(addr, r);
+    }
+    function _opROLZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        uint16 addr = uint16(b);
+        uint8 v = _read8(addr, false);
+        uint8 r = _rol(v);
+        _write8(addr, r);
+    }
+    function _opROLAbsolute() internal {
+        uint16 addr = _fetch16();
+        uint8 v = _read8(addr, false);
+        uint8 r = _rol(v);
+        _write8(addr, r);
+    }
+    function _opROLAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        uint8 v = _read8(addr, false);
+        uint8 r = _rol(v);
+        _write8(addr, r);
+    }
 
     // ROR
-    function _opRORAccumulator() internal { cpu.A = _ror(cpu.A); }
-    function _opRORZeroPage() internal { uint16 addr=uint16(_fetch8()); uint8 v=_read8(addr, false); uint8 r=_ror(v); _write8(addr,r); } 
-    function _opRORZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} uint16 addr=uint16(b); uint8 v=_read8(addr, false); uint8 r=_ror(v); _write8(addr,r); } 
-    function _opRORAbsolute() internal { uint16 addr=_fetch16(); uint8 v=_read8(addr, false); uint8 r=_ror(v); _write8(addr,r); } 
-    function _opRORAbsoluteX() internal { uint16 base=_fetch16(); uint16 addr=base+cpu.X; uint8 v=_read8(addr, false); uint8 r=_ror(v); _write8(addr,r); } 
+    function _opRORAccumulator() internal {
+        cpu.A = _ror(cpu.A);
+    }
+    function _opRORZeroPage() internal {
+        uint16 addr = uint16(_fetch8());
+        uint8 v = _read8(addr, false);
+        uint8 r = _ror(v);
+        _write8(addr, r);
+    }
+    function _opRORZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        uint16 addr = uint16(b);
+        uint8 v = _read8(addr, false);
+        uint8 r = _ror(v);
+        _write8(addr, r);
+    }
+    function _opRORAbsolute() internal {
+        uint16 addr = _fetch16();
+        uint8 v = _read8(addr, false);
+        uint8 r = _ror(v);
+        _write8(addr, r);
+    }
+    function _opRORAbsoluteX() internal {
+        uint16 base = _fetch16();
+        uint16 addr = base + cpu.X;
+        uint8 v = _read8(addr, false);
+        uint8 r = _ror(v);
+        _write8(addr, r);
+    }
 
     /// @dev Legacy if/else opcode dispatcher – will be removed once table is complete
     function _legacyDispatch(uint8 opcode) internal {
@@ -883,53 +1161,144 @@ contract Emulator6502 {
             _opCLI();
         } else if (opcode == 0x78) {
             _opSEI();
-        } else if (opcode == 0x06) { _opASLZeroPage(); }
-        else if (opcode == 0x16) { _opASLZeroPageX(); }
-        else if (opcode == 0x0E) { _opASLAbsolute(); }
-        else if (opcode == 0x1E) { _opASLAbsoluteX(); }
-        else if (opcode == 0x0A) { _opASLAccumulator(); }
-        else if (opcode == 0x46) { _opLSRZeroPage(); }
-        else if (opcode == 0x56) { _opLSRZeroPageX(); }
-        else if (opcode == 0x4E) { _opLSRAbsolute(); }
-        else if (opcode == 0x5E) { _opLSRAbsoluteX(); }
-        else if (opcode == 0x4A) { _opLSRAccumulator(); }
-        else if (opcode == 0x26) { _opROLZeroPage(); }
-        else if (opcode == 0x36) { _opROLZeroPageX(); }
-        else if (opcode == 0x2E) { _opROLAbsolute(); }
-        else if (opcode == 0x3E) { _opROLAbsoluteX(); }
-        else if (opcode == 0x2A) { _opROLAccumulator(); }
-        else if (opcode == 0x66) { _opRORZeroPage(); }
-        else if (opcode == 0x76) { _opRORZeroPageX(); }
-        else if (opcode == 0x6E) { _opRORAbsolute(); }
-        else if (opcode == 0x7E) { _opRORAbsoluteX(); }
-        else if (opcode == 0x6A) { _opRORAccumulator(); }
-        else if (opcode == 0x20) { _opJSR(); }
-        else if (opcode == 0x60) { _opRTS(); }
-        else if (opcode == 0x90) { _opBCC(); }
-        else if (opcode == 0xB0) { _opBCS(); }
-        else if (opcode == 0xF0) { _opBEQ(); }
-        else if (opcode == 0x30) { _opBMI(); }
-        else if (opcode == 0xD0) { _opBNE(); }
-        else if (opcode == 0x10) { _opBPL(); }
-        else if (opcode == 0x50) { _opBVC(); }
-        else if (opcode == 0x70) { _opBVS(); }
-        else if (opcode == 0x00) { _opBRK(); }
-        else if (opcode == 0x40) { _opRTI(); }
-        else if (opcode == 0x85) { _opSTAZeroPage(); }
-        else if (opcode == 0x95) { _opSTAZeroPageX(); }
-        else if (opcode == 0x8D) { _opSTAAbsolute(); }
-        else if (opcode == 0x9D) { _opSTAAbsoluteX(); }
-        else if (opcode == 0x99) { _opSTAAbsoluteY(); }
-        else if (opcode == 0x81) { _opSTAIndexedIndirect(); }
-        else if (opcode == 0x91) { _opSTAIndirectIndexed(); }
-        else if (opcode == 0x86) { _opSTXZeroPage(); }
-        else if (opcode == 0x96) { _opSTXZeroPageY(); }
-        else if (opcode == 0x8E) { _opSTXAbsolute(); }
-        else if (opcode == 0x84) { _opSTYZeroPage(); }
-        else if (opcode == 0x94) { _opSTYZeroPageX(); }
-        else if (opcode == 0x8C) { _opSTYAbsolute(); }
-        else if (opcode == 0x4C) { _opJMPAbsolute(); }
-        else {
+        } else if (opcode == 0x06) {
+            _opASLZeroPage();
+        } else if (opcode == 0x16) {
+            _opASLZeroPageX();
+        } else if (opcode == 0x0E) {
+            _opASLAbsolute();
+        } else if (opcode == 0x1E) {
+            _opASLAbsoluteX();
+        } else if (opcode == 0x0A) {
+            _opASLAccumulator();
+        } else if (opcode == 0x46) {
+            _opLSRZeroPage();
+        } else if (opcode == 0x56) {
+            _opLSRZeroPageX();
+        } else if (opcode == 0x4E) {
+            _opLSRAbsolute();
+        } else if (opcode == 0x5E) {
+            _opLSRAbsoluteX();
+        } else if (opcode == 0x4A) {
+            _opLSRAccumulator();
+        } else if (opcode == 0x26) {
+            _opROLZeroPage();
+        } else if (opcode == 0x36) {
+            _opROLZeroPageX();
+        } else if (opcode == 0x2E) {
+            _opROLAbsolute();
+        } else if (opcode == 0x3E) {
+            _opROLAbsoluteX();
+        } else if (opcode == 0x2A) {
+            _opROLAccumulator();
+        } else if (opcode == 0x66) {
+            _opRORZeroPage();
+        } else if (opcode == 0x76) {
+            _opRORZeroPageX();
+        } else if (opcode == 0x6E) {
+            _opRORAbsolute();
+        } else if (opcode == 0x7E) {
+            _opRORAbsoluteX();
+        } else if (opcode == 0x6A) {
+            _opRORAccumulator();
+        } else if (opcode == 0x20) {
+            _opJSR();
+        } else if (opcode == 0x60) {
+            _opRTS();
+        } else if (opcode == 0x90) {
+            _opBCC();
+        } else if (opcode == 0xB0) {
+            _opBCS();
+        } else if (opcode == 0xF0) {
+            _opBEQ();
+        } else if (opcode == 0x30) {
+            _opBMI();
+        } else if (opcode == 0xD0) {
+            _opBNE();
+        } else if (opcode == 0x10) {
+            _opBPL();
+        } else if (opcode == 0x50) {
+            _opBVC();
+        } else if (opcode == 0x70) {
+            _opBVS();
+        } else if (opcode == 0x00) {
+            _opBRK();
+        } else if (opcode == 0x40) {
+            _opRTI();
+        } else if (opcode == 0x85) {
+            _opSTAZeroPage();
+        } else if (opcode == 0x95) {
+            _opSTAZeroPageX();
+        } else if (opcode == 0x8D) {
+            _opSTAAbsolute();
+        } else if (opcode == 0x9D) {
+            _opSTAAbsoluteX();
+        } else if (opcode == 0x99) {
+            _opSTAAbsoluteY();
+        } else if (opcode == 0x81) {
+            _opSTAIndexedIndirect();
+        } else if (opcode == 0x91) {
+            _opSTAIndirectIndexed();
+        } else if (opcode == 0x86) {
+            _opSTXZeroPage();
+        } else if (opcode == 0x96) {
+            _opSTXZeroPageY();
+        } else if (opcode == 0x8E) {
+            _opSTXAbsolute();
+        } else if (opcode == 0x84) {
+            _opSTYZeroPage();
+        } else if (opcode == 0x94) {
+            _opSTYZeroPageX();
+        } else if (opcode == 0x8C) {
+            _opSTYAbsolute();
+        } else if (opcode == 0x4C) {
+            _opJMPAbsolute();
+        } else if (opcode == 0x6C) {
+            _opJMPIndirect();
+        }
+        // JMP (indirect)
+        else if (opcode == 0xEA) {
+            _opNOP();
+        }
+        // NOP
+        /* INC */
+        else if (opcode == 0xE6) {
+            _opINCZeroPage();
+        } else if (opcode == 0xF6) {
+            _opINCZeroPageX();
+        } else if (opcode == 0xEE) {
+            _opINCAbsolute();
+        } else if (opcode == 0xFE) {
+            _opINCAbsoluteX();
+        }
+        /* DEC */
+        else if (opcode == 0xC6) {
+            _opDECZeroPage();
+        } else if (opcode == 0xD6) {
+            _opDECZeroPageX();
+        } else if (opcode == 0xCE) {
+            _opDECAbsolute();
+        } else if (opcode == 0xDE) {
+            _opDECAbsoluteX();
+        }
+        /* Register transfers */
+        else if (opcode == 0xAA) {
+            _opTAX();
+        } else if (opcode == 0xA8) {
+            _opTAY();
+        } else if (opcode == 0x8A) {
+            _opTXA();
+        } else if (opcode == 0x98) {
+            _opTYA();
+        }
+        /* Flag operations */
+        else if (opcode == 0xB8) {
+            _opCLV();
+        } else if (opcode == 0xD8) {
+            _opCLD();
+        } else if (opcode == 0xF8) {
+            _opSED();
+        } else {
             revert("OpcodeNotImplemented");
         }
     }
@@ -940,11 +1309,15 @@ contract Emulator6502 {
 
     function _push8(uint8 value) internal {
         _write8(0x0100 | uint16(cpu.SP), value);
-        unchecked { cpu.SP -= 1; }
+        unchecked {
+            cpu.SP -= 1;
+        }
     }
 
     function _pop8() internal returns (uint8 value) {
-        unchecked { cpu.SP += 1; }
+        unchecked {
+            cpu.SP += 1;
+        }
         value = _read8(0x0100 | uint16(cpu.SP));
     }
 
@@ -960,32 +1333,64 @@ contract Emulator6502 {
     }
 
     // --- Stack related opcodes ---
-    function _opPHA() internal { _push8(cpu.A); }
-    function _opPLA() internal { cpu.A = _pop8(); _updateZN(cpu.A); }
-    function _opPHP() internal { _push8(cpu.P | 0x10); } // B flag set when pushed
-    function _opPLP() internal { cpu.P = (_pop8() & 0xEF) | 0x20; }
-    function _opTXS() internal { cpu.SP = cpu.X; }
-    function _opTSX() internal { cpu.X = cpu.SP; _updateZN(cpu.X); }
+    function _opPHA() internal {
+        _push8(cpu.A);
+    }
+    function _opPLA() internal {
+        cpu.A = _pop8();
+        _updateZN(cpu.A);
+    }
+    function _opPHP() internal {
+        _push8(cpu.P | 0x10);
+    } // B flag set when pushed
+    function _opPLP() internal {
+        cpu.P = (_pop8() & 0xEF) | 0x20;
+    }
+    function _opTXS() internal {
+        cpu.SP = cpu.X;
+    }
+    function _opTSX() internal {
+        cpu.X = cpu.SP;
+        _updateZN(cpu.X);
+    }
 
     // --- Branch helper ---
     function _branch(bool condition) internal {
         int8 offset = int8(uint8(_fetch8()));
         uint16 pc = cpu.PC;
-        uint16 target = uint16(uint32(int32(uint32(pc)) + int32(offset)) & 0xFFFF);
+        uint16 target = uint16(
+            uint32(int32(uint32(pc)) + int32(offset)) & 0xFFFF
+        );
         if (condition) {
             cpu.PC = target;
         }
     }
 
     // Branch opcodes
-    function _opBCC() internal { _branch(!_getFlag(FLAG_CARRY)); }
-    function _opBCS() internal { _branch(_getFlag(FLAG_CARRY)); }
-    function _opBEQ() internal { _branch(_getFlag(FLAG_ZERO)); }
-    function _opBMI() internal { _branch(_getFlag(FLAG_NEGATIVE)); }
-    function _opBNE() internal { _branch(!_getFlag(FLAG_ZERO)); }
-    function _opBPL() internal { _branch(!_getFlag(FLAG_NEGATIVE)); }
-    function _opBVC() internal { _branch(!_getFlag(FLAG_OVERFLOW)); }
-    function _opBVS() internal { _branch(_getFlag(FLAG_OVERFLOW)); }
+    function _opBCC() internal {
+        _branch(!_getFlag(FLAG_CARRY));
+    }
+    function _opBCS() internal {
+        _branch(_getFlag(FLAG_CARRY));
+    }
+    function _opBEQ() internal {
+        _branch(_getFlag(FLAG_ZERO));
+    }
+    function _opBMI() internal {
+        _branch(_getFlag(FLAG_NEGATIVE));
+    }
+    function _opBNE() internal {
+        _branch(!_getFlag(FLAG_ZERO));
+    }
+    function _opBPL() internal {
+        _branch(!_getFlag(FLAG_NEGATIVE));
+    }
+    function _opBVC() internal {
+        _branch(!_getFlag(FLAG_OVERFLOW));
+    }
+    function _opBVS() internal {
+        _branch(_getFlag(FLAG_OVERFLOW));
+    }
 
     // JSR / RTS
     function _opJSR() internal {
@@ -1100,87 +1505,265 @@ contract Emulator6502 {
     }
 
     // --- STX helper ---
-    function _stx(uint16 addr) internal { _write8(addr, cpu.X); }
-    function _opSTXZeroPage() internal { _stx(uint16(_fetch8())); }
-    function _opSTXZeroPageY() internal { uint8 b=_fetch8(); unchecked{b+=cpu.Y;} _stx(uint16(b)); }
-    function _opSTXAbsolute() internal { _stx(_fetch16()); }
+    function _stx(uint16 addr) internal {
+        _write8(addr, cpu.X);
+    }
+    function _opSTXZeroPage() internal {
+        _stx(uint16(_fetch8()));
+    }
+    function _opSTXZeroPageY() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.Y;
+        }
+        _stx(uint16(b));
+    }
+    function _opSTXAbsolute() internal {
+        _stx(_fetch16());
+    }
 
     // --- STY helper ---
-    function _sty(uint16 addr) internal { _write8(addr, cpu.Y); }
-    function _opSTYZeroPage() internal { _sty(uint16(_fetch8())); }
-    function _opSTYZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _sty(uint16(b)); }
-    function _opSTYAbsolute() internal { _sty(_fetch16()); }
+    function _sty(uint16 addr) internal {
+        _write8(addr, cpu.Y);
+    }
+    function _opSTYZeroPage() internal {
+        _sty(uint16(_fetch8()));
+    }
+    function _opSTYZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _sty(uint16(b));
+    }
+    function _opSTYAbsolute() internal {
+        _sty(_fetch16());
+    }
 
     // --- STA helper ---
-    function _sta(uint16 addr) internal { _write8(addr, cpu.A); }
-    function _opSTAZeroPage() internal { _sta(uint16(_fetch8())); }
-    function _opSTAZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _sta(uint16(b)); }
-    function _opSTAAbsolute() internal { _sta(_fetch16()); }
-    function _opSTAAbsoluteX() internal { uint16 base=_fetch16(); _sta(base+cpu.X); }
-    function _opSTAAbsoluteY() internal { uint16 base=_fetch16(); _sta(base+cpu.Y); }
-    function _opSTAIndexedIndirect() internal { uint8 p=_fetch8(); unchecked{p+=cpu.X;} uint16 addr=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _sta(addr);} 
-    function _opSTAIndirectIndexed() internal { uint8 p=_fetch8(); uint16 base=uint16(_read8(uint16(p)))|(uint16(_read8(uint16(uint8(p+1))))<<8); _sta(base+cpu.Y);} 
+    function _sta(uint16 addr) internal {
+        _write8(addr, cpu.A);
+    }
+    function _opSTAZeroPage() internal {
+        _sta(uint16(_fetch8()));
+    }
+    function _opSTAZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _sta(uint16(b));
+    }
+    function _opSTAAbsolute() internal {
+        _sta(_fetch16());
+    }
+    function _opSTAAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _sta(base + cpu.X);
+    }
+    function _opSTAAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _sta(base + cpu.Y);
+    }
+    function _opSTAIndexedIndirect() internal {
+        uint8 p = _fetch8();
+        unchecked { p += cpu.X; }
+        uint16 addr = uint16(_read8(uint16(p))) | (uint16(_read8(uint16(_zpNext(p)))) << 8);
+        _sta(addr);
+    }
+    function _opSTAIndirectIndexed() internal {
+        uint8 p = _fetch8();
+        uint16 base = uint16(_read8(uint16(p))) | (uint16(_read8(uint16(uint8(p + 1)))) << 8);
+        _sta(base + cpu.Y);
+    }
 
     // --- JMP helper ---
-    function _opJMPAbsolute() internal { uint16 addr=_fetch16(); cpu.PC = addr; }
+    function _opJMPAbsolute() internal {
+        uint16 addr = _fetch16();
+        cpu.PC = addr;
+    }
 
     /*//////////////////////////////////////////////////////////////////////////
                                 MISSING CORE OPCODES
     //////////////////////////////////////////////////////////////////////////*/
 
     // --- Flag / NOP opcodes ---
-    function _opCLC() internal { _setFlag(FLAG_CARRY, false); }
-    function _opSEC() internal { _setFlag(FLAG_CARRY, true); }
-    function _opCLI() internal { _setFlag(FLAG_INTERRUPT, false); }
-    function _opSEI() internal { _setFlag(FLAG_INTERRUPT, true); }
-    function _opCLV() internal { _setFlag(FLAG_OVERFLOW, false); }
-    function _opCLD() internal { _setFlag(FLAG_DECIMAL, false); }
-    function _opSED() internal { _setFlag(FLAG_DECIMAL, true); }
-    function _opNOP() internal { /* nothing */ }
+    function _opCLC() internal {
+        _setFlag(FLAG_CARRY, false);
+    }
+    function _opSEC() internal {
+        _setFlag(FLAG_CARRY, true);
+    }
+    function _opCLI() internal {
+        _setFlag(FLAG_INTERRUPT, false);
+    }
+    function _opSEI() internal {
+        _setFlag(FLAG_INTERRUPT, true);
+    }
+    function _opCLV() internal {
+        _setFlag(FLAG_OVERFLOW, false);
+    }
+    function _opCLD() internal {
+        _setFlag(FLAG_DECIMAL, false);
+    }
+    function _opSED() internal {
+        _setFlag(FLAG_DECIMAL, true);
+    }
+    function _opNOP() internal {
+        /* nothing */
+    }
 
     // --- Register transfers ---
-    function _opTAX() internal { cpu.X = cpu.A; _updateZN(cpu.X); }
-    function _opTAY() internal { cpu.Y = cpu.A; _updateZN(cpu.Y); }
-    function _opTXA() internal { cpu.A = cpu.X; _updateZN(cpu.A); }
-    function _opTYA() internal { cpu.A = cpu.Y; _updateZN(cpu.A); }
+    function _opTAX() internal {
+        cpu.X = cpu.A;
+        _updateZN(cpu.X);
+    }
+    function _opTAY() internal {
+        cpu.Y = cpu.A;
+        _updateZN(cpu.Y);
+    }
+    function _opTXA() internal {
+        cpu.A = cpu.X;
+        _updateZN(cpu.A);
+    }
+    function _opTYA() internal {
+        cpu.A = cpu.Y;
+        _updateZN(cpu.A);
+    }
 
     // --- Increment / Decrement register ---
-    function _opINX() internal { unchecked { cpu.X += 1; } _updateZN(cpu.X); }
-    function _opINY() internal { unchecked { cpu.Y += 1; } _updateZN(cpu.Y); }
-    function _opDEX() internal { unchecked { cpu.X -= 1; } _updateZN(cpu.X); }
-    function _opDEY() internal { unchecked { cpu.Y -= 1; } _updateZN(cpu.Y); }
+    function _opINX() internal {
+        unchecked {
+            cpu.X += 1;
+        }
+        _updateZN(cpu.X);
+    }
+    function _opINY() internal {
+        unchecked {
+            cpu.Y += 1;
+        }
+        _updateZN(cpu.Y);
+    }
+    function _opDEX() internal {
+        unchecked {
+            cpu.X -= 1;
+        }
+        _updateZN(cpu.X);
+    }
+    function _opDEY() internal {
+        unchecked {
+            cpu.Y -= 1;
+        }
+        _updateZN(cpu.Y);
+    }
 
     // --- INC / DEC memory helpers ---
-    function _incMem(uint16 addr) internal { uint8 v=_read8(addr, false); unchecked{v+=1;} _write8(addr, v); _updateZN(v); }
-    function _decMem(uint16 addr) internal { uint8 v=_read8(addr, false); unchecked{v-=1;} _write8(addr, v); _updateZN(v); }
+    function _incMem(uint16 addr) internal {
+        uint8 v = _read8(addr, false);
+        unchecked {
+            v += 1;
+        }
+        _write8(addr, v);
+        _updateZN(v);
+    }
+    function _decMem(uint16 addr) internal {
+        uint8 v = _read8(addr, false);
+        unchecked {
+            v -= 1;
+        }
+        _write8(addr, v);
+        _updateZN(v);
+    }
 
-    function _opINCZeroPage() internal { _incMem(uint16(_fetch8())); }
-    function _opINCZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _incMem(uint16(b)); }
-    function _opINCAbsolute() internal { _incMem(_fetch16()); }
-    function _opINCAbsoluteX() internal { uint16 base=_fetch16(); _incMem(base+cpu.X); }
+    function _opINCZeroPage() internal {
+        _incMem(uint16(_fetch8()));
+    }
+    function _opINCZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _incMem(uint16(b));
+    }
+    function _opINCAbsolute() internal {
+        _incMem(_fetch16());
+    }
+    function _opINCAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _incMem(base + cpu.X);
+    }
 
-    function _opDECZeroPage() internal { _decMem(uint16(_fetch8())); }
-    function _opDECZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _decMem(uint16(b)); }
-    function _opDECAbsolute() internal { _decMem(_fetch16()); }
-    function _opDECAbsoluteX() internal { uint16 base=_fetch16(); _decMem(base+cpu.X); }
+    function _opDECZeroPage() internal {
+        _decMem(uint16(_fetch8()));
+    }
+    function _opDECZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _decMem(uint16(b));
+    }
+    function _opDECAbsolute() internal {
+        _decMem(_fetch16());
+    }
+    function _opDECAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _decMem(base + cpu.X);
+    }
 
     // --- LDX / LDY ---
-    function _ldx(uint8 v) internal { cpu.X = v; _updateZN(v); }
-    function _ldy(uint8 v) internal { cpu.Y = v; _updateZN(v); }
+    function _ldx(uint8 v) internal {
+        cpu.X = v;
+        _updateZN(v);
+    }
+    function _ldy(uint8 v) internal {
+        cpu.Y = v;
+        _updateZN(v);
+    }
 
     // LDX addressing modes
-    function _opLDXImmediate() internal { _ldx(_fetch8()); }
-    function _opLDXZeroPage() internal { _ldx(_read8(uint16(_fetch8()), false)); }
-    function _opLDXZeroPageY() internal { uint8 b=_fetch8(); unchecked{b+=cpu.Y;} _ldx(_read8(uint16(b), false)); }
-    function _opLDXAbsolute() internal { _ldx(_read8(_fetch16(), false)); }
-    function _opLDXAbsoluteY() internal { uint16 base=_fetch16(); _ldx(_read8(base+cpu.Y, false)); }
+    function _opLDXImmediate() internal {
+        _ldx(_fetch8());
+    }
+    function _opLDXZeroPage() internal {
+        _ldx(_read8(uint16(_fetch8()), false));
+    }
+    function _opLDXZeroPageY() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.Y;
+        }
+        _ldx(_read8(uint16(b), false));
+    }
+    function _opLDXAbsolute() internal {
+        _ldx(_read8(_fetch16(), false));
+    }
+    function _opLDXAbsoluteY() internal {
+        uint16 base = _fetch16();
+        _ldx(_read8(base + cpu.Y, false));
+    }
 
     // LDY addressing modes
-    function _opLDYImmediate() internal { _ldy(_fetch8()); }
-    function _opLDYZeroPage() internal { _ldy(_read8(uint16(_fetch8()), false)); }
-    function _opLDYZeroPageX() internal { uint8 b=_fetch8(); unchecked{b+=cpu.X;} _ldy(_read8(uint16(b), false)); }
-    function _opLDYAbsolute() internal { _ldy(_read8(_fetch16(), false)); }
-    function _opLDYAbsoluteX() internal { uint16 base=_fetch16(); _ldy(_read8(base+cpu.X, false)); }
+    function _opLDYImmediate() internal {
+        _ldy(_fetch8());
+    }
+    function _opLDYZeroPage() internal {
+        _ldy(_read8(uint16(_fetch8()), false));
+    }
+    function _opLDYZeroPageX() internal {
+        uint8 b = _fetch8();
+        unchecked {
+            b += cpu.X;
+        }
+        _ldy(_read8(uint16(b), false));
+    }
+    function _opLDYAbsolute() internal {
+        _ldy(_read8(_fetch16(), false));
+    }
+    function _opLDYAbsoluteX() internal {
+        uint16 base = _fetch16();
+        _ldy(_read8(base + cpu.X, false));
+    }
 
     // --- JMP (indirect) ---
     function _opJMPIndirect() internal {
@@ -1193,4 +1776,11 @@ contract Emulator6502 {
     }
 
     uint8 public lastOpcode;
-} 
+
+    // Helper: wraparound pointer increment within zero‑page (0x00‑0xFF)
+    function _zpNext(uint8 p) internal pure returns (uint8) {
+        unchecked {
+            return uint8(p + 1);
+        }
+    }
+}
