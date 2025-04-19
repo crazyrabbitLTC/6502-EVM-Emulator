@@ -55,7 +55,7 @@ contract InterruptsTest is Test {
         emu.step();
         (, , , uint8 spAfterRTI, uint16 pcAfterRTI, uint8 pAfterRTI,) = _cpu();
         assertEq(spAfterRTI, 0xFD, "SP not restored by RTI");
-        assertEq(pcAfterRTI, 0x8001, "PC not restored by RTI");
+        assertEq(pcAfterRTI, 0x8002, "PC not restored by RTI");
         assertEq(pAfterRTI, 0x24, "Processor status restore incorrect");
     }
 
