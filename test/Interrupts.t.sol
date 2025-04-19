@@ -48,7 +48,7 @@ contract InterruptsTest is Test {
         assertEq(spAfterBRK, 0xFA, "SP decrement incorrect after BRK push");
         // Stack checks
         assertEq(emu.peek8(0x01FD), 0x80, "High byte incorrect");
-        assertEq(emu.peek8(0x01FC), 0x01, "Low byte incorrect");
+        assertEq(emu.peek8(0x01FC), 0x02, "Low byte incorrect");
         assertEq(emu.peek8(0x01FB), 0x34, "Status byte incorrect");
 
         // Step RTI
