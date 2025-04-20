@@ -5,29 +5,21 @@ This repository contains a pure‑Solidity implementation of the MOS 6502 CPU to
 ## High‑level architecture
 
 ```mermaid
-graph TD
-
-    %% Off‑chain test harness
-    T["forge‑std<br/>Test contracts"]
-
-    %% On‑chain components
-    subgraph "On‑chain (EVM)"
-        BasicRom["BasicRom<br/>(16 KiB EhBASIC ROM)"]
-        RAM["64 KiB RAM"]
+graph LR
+    subgraph "Emulator contract"
+        BasicRom["BasicRom<br/>(optional ROM contract)"]
+        RAM[(64 KiB RAM array)]
         CPU["Emulator6502<br/>CPU core + run‑loop"]
-
-        subgraph "I/O page $F000–$F0FF"
-            KBD["IO_KBD<br/>$F000"]
-            TTY["IO_TTY<br/>$F001"]
-        end
+        KBD["IO_KBD $F000"]
+        TTY["IO_TTY $F001"]
     end
 
-    %% Data‐flow arrows
-    BasicRom -->|loadRomFrom| RAM
-    RAM --> CPU
-    CPU -- read --> KBD
-    CPU -- write --> TTY
-    CPU -- "CharOut / Trace* events" --> T
+    BasicRom -- loadRomFrom() --> RAM
+    CPU -->|fetch/store| RAM
+    CPU -->|read| KBD
+    CPU -->|write| TTY
+    TTY -- CharOut(uint8) log --> EVM[(Ethereum Log)]
+    CPU -- Trace* / ProgramHalted logs --> EVM
 ```
 
 ### Memory map (default)
@@ -168,3 +160,56 @@ $ cast --help
 > Imagine the tiny **MOS 6502** microprocessor as the brain inside 1980‑era home computers like the Commodore 64 or Apple II. With just **3 square millimetres of silicon and 3,510 transistors** it managed to run games, BASIC interpreters, and even early spreadsheets. Forty‑plus years later we can fit an entire global financial network on one of today's chips – but instead we decided to stick that little 6502 *inside* Ethereum, purely in software! 🤯  
 >  
 > This project shows how you can **emulate** an 8‑bit computer in Solidity so it runs deterministically in the EVM, producing events instead of pixels. It's half retro‑computing nostalgia, half smart‑contract engineering exercise. You can load unmodified 6502 machine‑code (like the EhBASIC interpreter) and watch it boot, read "keyboard" bytes, and print characters — all on chain.
+
+## Building & loading ROMs
+
+### 1  Author or obtain 6502 machine‑code
+
+You can write 6502 assembly using any cross‑assembler (`[ca65](https://github.com/cc65/cc65)`, [`vasm`](http://www.compilers.de/vasm.html), etc.) or carve out raw bytes in a hex‑editor.
+
+```asm
+        ; hello.asm – assemble with ca65 & ld65
+        * = $A000         ; origin inside RAM
+        LDX #0            ; X = 0
+LOOP    LDA MSG,X         ; load byte
+        BEQ DONE         ; 0‑terminator ?
+        STA $F001         ; output char
+        INX
+        BNE LOOP
+DONE    BRK
+MSG     .byte "HELLO",0
+```
+
+### 2  Package as a Solidity ROM contract *(optional)*
+
+For larger programs you can embed the raw bytes in a contract so tests (or front‑ends) can deploy and `loadRomFrom()` it at runtime.  See `scripts/build_basic_rom.py` which generates `src/BasicRom.sol` from a 16 KiB binary.
+
+### 3  Load the ROM into the emulator
+
+```solidity
+Emulator6502 emu = new Emulator6502();
+
+// (A) Using an on‑chain ROM contract
+BasicRom rom = new BasicRom();
+emu.loadRomFrom(address(rom), 0xA000); // copy into RAM at $A000
+
+// (B) Manual poke for small snippets
+bytes memory code = hex"a9008d01f000"; // LDA #$00 ; STA $F001 ; BRK
+for (uint16 i = 0; i < code.length; i++) {
+    emu.poke8(0x8000 + i, uint8(code[i]));
+}
+
+// Set RESET vector so CPU starts executing at our code
+emu.poke8(0xFFFC, 0x00);
+emu.poke8(0xFFFD, 0x80); // -> $8000
+
+emu.boot();
+emu.run(10);
+```
+
+### 4  Observe output
+
+Catch `CharOut(uint8)` logs in tests or front‑ends to reconstruct the terminal stream.  Use `TracePC`/`TraceJSR` for debugging and `ProgramHalted` for graceful termination.
+
+
+built with love by Dennison Bertram & ChatGPT o3
