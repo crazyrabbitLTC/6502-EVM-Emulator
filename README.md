@@ -6,25 +6,28 @@ This repository contains a pure‑Solidity implementation of the MOS 6502 CPU to
 
 ```mermaid
 graph TD
-    subgraph Off‑chain (tests)
-        T[forge‑std Test contracts]
-    end
 
-    subgraph On‑chain (EVM)
-        BasicRom[(BasicRom contract – 16 KiB EhBASIC image)]
-        RAM[(Emulator internal 64 KiB RAM array)]
-        CPU[Emulator6502 – CPU core + run‑loop]
+    %% Off‑chain test harness
+    T["forge‑std<br/>Test contracts"]
 
-        subgraph I/O page  $F000–$F0FF
-            KBD[IO_KBD  $F000] -- read --> CPU
-            TTY[IO_TTY  $F001] -. write .-> CPU
+    %% On‑chain components
+    subgraph "On‑chain (EVM)"
+        BasicRom["BasicRom<br/>(16 KiB EhBASIC ROM)"]
+        RAM["64 KiB RAM"]
+        CPU["Emulator6502<br/>CPU core + run‑loop"]
+
+        subgraph "I/O page $F000–$F0FF"
+            KBD["IO_KBD<br/>$F000"]
+            TTY["IO_TTY<br/>$F001"]
         end
     end
 
-    BasicRom -- loadRomFrom() --> RAM
+    %% Data‐flow arrows
+    BasicRom -->|loadRomFrom| RAM
     RAM --> CPU
-    CPU -- CharOut event --> T
-    CPU -- TracePC / TraceJSR / ProgramHalted events --> T
+    CPU -- read --> KBD
+    CPU -- write --> TTY
+    CPU -- "CharOut / Trace* events" --> T
 ```
 
 ### Memory map (default)
