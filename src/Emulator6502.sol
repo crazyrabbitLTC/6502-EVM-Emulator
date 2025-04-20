@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "./OpcodeTable.sol";
 
-/// @title Emulator6502 – Minimal 6502 CPU skeleton
+/// @title Emulator6502 – Minimal 6502 CPU skeleton
 /// @notice Phase 0 shell that only initialises registers to power‑on state
 /// @dev Further opcodes and memory will be added in later phases
 contract Emulator6502 {
@@ -64,9 +64,16 @@ contract Emulator6502 {
     event CharOut(uint8 ascii);
     /// @notice Emitted when `run()` halts because a BRK was executed or the step budget expired
     event ProgramHalted(uint64 stepsExecuted);
+    /// @notice Emitted whenever the guest executes a JSR that targets the high‑RAM / I/O window ($F000–$FFFF).
+    event TraceJSR(uint16 target);
+    /// @notice Emits current PC each time an instruction in ROM page $A000–$AFFF is executed when tracing is enabled.
+    event TracePC(uint16 pc);
+    /// @notice Emitted right before revert when an opcode is not yet implemented.
+    event UnknownOpcode(uint16 pc, uint8 opcode);
 
     // Indicates the CPU has encountered a BRK instruction and execution should stop
     bool public halted;
+    bool public pcTraceEnabled;
 
     /*//////////////////////////////////////////////////////////////////////////
                                    CONSTRUCTOR
@@ -985,6 +992,13 @@ contract Emulator6502 {
 
     /// @dev Legacy if/else opcode dispatcher – will be removed once table is complete
     function _legacyDispatch(uint8 opcode) internal {
+        if (pcTraceEnabled) {
+            uint16 pc = cpu.PC;
+            if (pc >= 0xA000) {
+                _recordPC(pc);
+                emit TracePC(pc);
+            }
+        }
         if (opcode == 0xA9) {
             _opLDAImmediate();
         } else if (opcode == 0xA5) {
@@ -1299,6 +1313,7 @@ contract Emulator6502 {
         } else if (opcode == 0xF8) {
             _opSED();
         } else {
+            emit UnknownOpcode(cpu.PC - 1, opcode);
             revert("OpcodeNotImplemented");
         }
     }
@@ -1399,6 +1414,11 @@ contract Emulator6502 {
         uint16 returnAddr = cpu.PC - 1;
         _push16(returnAddr);
         cpu.PC = addr;
+
+        // Log JSRs into the high-RAM / I/O region so tests can observe BASIC's output path
+        if (addr >= 0xF000) {
+            emit TraceJSR(addr);
+        }
     }
 
     function _opRTS() internal {
@@ -1443,11 +1463,12 @@ contract Emulator6502 {
     function _opBRK() internal {
         // BRK is a 2‑byte instruction; consume the padding byte
         _fetch8();
-        // Service interrupt using the IRQ/BRK vector with Break flag set
+        // Service interrupt using the IRQ/BRK vector with Break flag set.
+        // Unlike earlier version we no longer halt the CPU here – many
+        // 6502 programs (including EhBASIC) repurpose BRK as a software
+        // interrupt.  Execution continues from the handler pointed to by
+        // the IRQ/BRK vector at `$FFFE/$FFFF`.
         _serviceInterrupt(VECTOR_IRQ, true);
-
-        // Mark CPU as halted so outer loops know to stop execution.
-        halted = true;
     }
 
     // --- Interrupt return opcode ---
@@ -1782,5 +1803,30 @@ contract Emulator6502 {
         unchecked {
             return uint8(p + 1);
         }
+    }
+
+    /// Enable or disable PC tracing (tests/dev only)
+    function setPCTrace(bool enable) external {
+        pcTraceEnabled = enable;
+    }
+
+    // ----------------------------------------------------------------
+    // PC tracing buffer (testing aid) – captures every PC >= $A000 when
+    // pcTraceEnabled is true.  Accessible via the public array getter.
+    // ----------------------------------------------------------------
+    uint16[] public pcTraceBuf;
+
+    function _recordPC(uint16 pc) internal {
+        pcTraceBuf.push(pc);
+    }
+
+    /// @notice Clear the stored PC trace (testing helper)
+    function clearTrace() external {
+        delete pcTraceBuf;
+    }
+
+    /// @notice Current number of PCs stored in trace buffer
+    function pcTraceCount() external view returns (uint256) {
+        return pcTraceBuf.length;
     }
 }

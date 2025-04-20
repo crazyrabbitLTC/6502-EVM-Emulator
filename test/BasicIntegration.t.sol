@@ -12,17 +12,15 @@ contract BasicIntegrationTest is Test {
 
     function setUp() public {
         rom = new BasicRom();
-        // Inject full EhBASIC 16 KiB image into the freshly‑deployed ROM contract
-        bytes memory romBytes = vm.readFileBinary("rom/ehbasic.rom");
-        require(romBytes.length == 16_384, "Unexpected ROM size");
-        vm.etch(address(rom), romBytes);
+        // BasicRom bytecode already contains the full 16 KiB EhBASIC image, so no
+        // need to read from disk or use `vm.etch`.
 
         emu = new Emulator6502();
 
-        // Load ROM at $8000 from the contract code we just etched
-        emu.loadRomFrom(address(rom), 0x8000);
+        // Load ROM at $A000 (native EhBASIC base)
+        emu.loadRomFrom(address(rom), 0xA000);
 
-        // Patch reset vector to $8000
+        // Patch reset vector to $8000 (start of our stub)
         emu.poke8(0xFFFC, 0x00);
         emu.poke8(0xFFFD, 0x80);
 
