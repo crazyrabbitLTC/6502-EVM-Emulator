@@ -218,7 +218,7 @@ Running 64 KiB of RAM inside the EVM is storage‑heavy; some chains make that a
 | Network / stack | 0.8.20 compiler | 24 kB code‑size cap | Gas price / storage cost | Verdict for this 6502 core |
 |-----------------|-----------------|----------------------|---------------------------|----------------------------|
 | **MegaETH** | ✔ | 24 kB (same as L1) | Ultra‑cheap, tuned for heavy on‑chain compute | **YES – ideal target** |
-| **Monad** (test‑net upcoming) | ✔ (Solidity/EVM parity announced) | 24 kB | Very high throughput, low gas | Should work once live; good fit |
+| **Monad**  | ✔  | 24 kB | Very high throughput, low gas | Should work once live; good fit |
 | **Arbitrum Orbit** (custom Nitro chains) | ✔ | 24 kB per contract | Chain operator can set near‑zero gas & high block gas | **YES – deploy on your own Orbit** |
 | Arbitrum One / Nova | ✔ | 24 kB | Cheaper than L1 but `SSTORE` still pricey | Works technically, but each `step()` costs 0.3–0.6 M gas |
 | Ethereum mainnet / Sepolia / Holesky | ✔ | 24 kB | Very high gas for 64 kB storage writes | Deploys, but running even a few hundred instructions exceeds block gas – impractical |
