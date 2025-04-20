@@ -12,11 +12,11 @@ graph TD
 
     %% On‑chain components
     subgraph "On‑chain (EVM)"
-        BasicRom["BasicRom<br/>(16 KiB EhBASIC ROM)"]
-        RAM["64 KiB RAM"]
+        BasicRom["BasicRom<br/>(16 KiB EhBASIC ROM)"]
+        RAM["64 KiB RAM"]
         CPU["Emulator6502<br/>CPU core + run‑loop"]
 
-        subgraph "I/O page $F000–$F0FF"
+        subgraph "I/O page $F000–$F0FF"
             KBD["IO_KBD<br/>$F000"]
             TTY["IO_TTY<br/>$F001"]
         end
@@ -163,3 +163,8 @@ $ forge --help
 $ anvil --help
 $ cast --help
 ```
+
+> **ELI5 – Why should I care?**  
+> Imagine the tiny **MOS 6502** microprocessor as the brain inside 1980‑era home computers like the Commodore 64 or Apple II. With just **3 square millimetres of silicon and 3,510 transistors** it managed to run games, BASIC interpreters, and even early spreadsheets. Forty‑plus years later we can fit an entire global financial network on one of today's chips – but instead we decided to stick that little 6502 *inside* Ethereum, purely in software! 🤯  
+>  
+> This project shows how you can **emulate** an 8‑bit computer in Solidity so it runs deterministically in the EVM, producing events instead of pixels. It's half retro‑computing nostalgia, half smart‑contract engineering exercise. You can load unmodified 6502 machine‑code (like the EhBASIC interpreter) and watch it boot, read "keyboard" bytes, and print characters — all on chain.
